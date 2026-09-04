@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# VS Code and a browser - the two GUI applications the XFCE/xrdp desktop exists to run.
+#
+# The desktop from 10-desktop-xrdp.sh is deliberately bare XFCE: no editor and no browser
+# come with it. Both are needed here - VS Code to edit the project over RDP, and Chromium
+# to open the React dev server and its devtools, which is the web equivalent of what the
+# emulator does for the native builds.
+
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "==> VS Code (Microsoft apt repository)"
+sudo apt-get install -y wget gpg apt-transport-https
+# Keyring in /usr/share/keyrings + signed-by, not the deprecated apt-key.
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc     | gpg --dearmor     | sudo tee /usr/share/keyrings/microsoft.gpg >/dev/null
+sudo chmod 644 /usr/share/keyrings/microsoft.gpg
+echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main"     | sudo tee /etc/apt/sources.list.d/vscode.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y code
+
+# xdg-utils is what "Open Folder", clicking a link in the terminal, and VS Code's
+# "open in browser" all shell out to. Missing, those silently do nothing.
+sudo apt-get install -y xdg-utils
+
+echo "==> Chromium"
+# On 24.04 the chromium-browser deb is a shim that pulls the snap, so this needs snapd to
+# be working. Chromium is a convenience for web work, not a build dependency, so a failure
+# here is a warning: the image is still usable for React Native and Capacitor.
+if ! sudo apt-get install -y chromium-browser; then
+    sudo snap install chromium || echo "    chromium unavailable; install it in the VM if you need a browser" >&2
+fi
+
+echo "==> versions"
+code --version | head -n1
+(chromium --version || chromium-browser --version || echo "chromium: not installed") 2>/dev/null | head -n1
+
+echo "==> 25-ide-browser.sh done"
