@@ -113,7 +113,7 @@ exists.
 | `platform-tools` (`adb`) | current |
 | `emulator` | current |
 | `platforms;android-<API>` | newest bootable API (`android_api` to pin) |
-| `build-tools;<ver>` | newest stable, RCs skipped (`android_build_tools` to pin) |
+| `build-tools;<ver>` | newest stable on the resolved API's line, RCs skipped (`android_build_tools` to pin) |
 | `system-images;android-<API>;google_apis;x86_64` | ~1.5 GB |
 
 `<API>` is resolved at build time as the newest API level that actually has a
@@ -319,7 +319,7 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | Node | NodeSource `setup_22.x` | newest 22.x |
 | OpenJDK | `openjdk-17-jdk` from the archive | newest 17.x |
 | Android API + system image | newest API that has a `google_apis;x86_64` image | resolved by `sdkmanager --list` |
-| Android build-tools | newest stable (release candidates skipped) | resolved by `sdkmanager --list` |
+| Android build-tools | newest stable with a major <= the resolved API | resolved by `sdkmanager --list` |
 | `cmdline-tools` | bootstrapped from a pinned zip, then `sdkmanager --install "cmdline-tools;latest"` | current |
 | `platform-tools` (adb), `emulator` | `sdkmanager --install` with no revision | current |
 | VS Code | Microsoft `stable` channel | current |
@@ -350,6 +350,11 @@ because the naive version breaks the build:
 - **Release candidates are excluded.** The package-id patterns are `$`-anchored, which rejects
   `build-tools;36.0.0-rc1` and preview platforms like `platforms;android-VanillaIceCream`. A
   golden image should not be built against a preview toolchain by accident.
+- **build-tools is capped at the resolved API.** Their majors track API levels — the 36.x line
+  belongs to API 36 — and the next major ships long before the platform and emulator image it
+  belongs to. Uncapped, "newest" pairs build-tools 37 with API 36: not broken, but no AGP will
+  select it, so the first project build downloads the right one anyway and the shipped copy is
+  dead weight.
 
 One risk this leaves open, stated plainly: a new Android API or AGP can land that React Native
 does not support yet, and the next rebuild picks it up. That is the accepted cost of tracking
@@ -363,7 +368,7 @@ Every resolver is an override, so a pin is a flag rather than an edit:
 | Variable | Default | Pinned example |
 |---|---|---|
 | `android_api` | *(empty — newest bootable API)* | `-var android_api=35` |
-| `android_build_tools` | *(empty — newest stable)* | `-var android_build_tools=35.0.0` |
+| `android_build_tools` | *(empty — newest on the API's line)* | `-var android_build_tools=35.0.0` |
 | `node_major` | 22 | `-var node_major=24` |
 | `watchman_version` | *(empty — newest with a Linux zip)* | `-var watchman_version=v2024.11.11.00` |
 | `android_cmdline_tools_url` | pinned bootstrap zip | replaced by `cmdline-tools;latest` regardless |

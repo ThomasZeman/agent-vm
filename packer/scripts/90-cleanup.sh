@@ -4,11 +4,19 @@
 
 set -euo pipefail
 
-export DEBIAN_FRONTEND=noninteractive
+# sudo runs with env_reset, so an exported DEBIAN_FRONTEND never reaches the apt-get on the
+# other side of it - which is what fills the build log with "debconf: unable to initialize
+# frontend: Dialog" and two more lines walking down to Teletype. Passing the settings as sudo
+# arguments is the form that survives. NEEDRESTART_SUSPEND silences the apt hook that lists
+# deferred restarts and outdated sessions: accurate, and meaningless for a machine that is
+# about to be shut down and imaged.
+apt_get() {
+    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "$@"
+}
 
 echo "==> apt caches"
-sudo apt-get -y autoremove --purge
-sudo apt-get -y clean
+apt_get -y autoremove --purge
+apt_get -y clean
 sudo rm -rf /var/lib/apt/lists/*
 
 echo "==> pin clone datasource to NoCloud"

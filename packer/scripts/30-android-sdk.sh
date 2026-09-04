@@ -3,7 +3,15 @@
 
 set -euo pipefail
 
-export DEBIAN_FRONTEND=noninteractive
+# sudo runs with env_reset, so an exported DEBIAN_FRONTEND never reaches the apt-get on the
+# other side of it - which is what fills the build log with "debconf: unable to initialize
+# frontend: Dialog" and two more lines walking down to Teletype. Passing the settings as sudo
+# arguments is the form that survives. NEEDRESTART_SUSPEND silences the apt hook that lists
+# deferred restarts and outdated sessions: accurate, and meaningless for a machine that is
+# about to be shut down and imaged.
+apt_get() {
+    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "$@"
+}
 
 # Empty means "resolve the newest" - see the resolver below. The image is meant to ship
 # current tooling, so latest is the default and a pin is the exception.
@@ -26,7 +34,7 @@ echo "==> emulator runtime dependencies"
 # followed by a fatal "no Qt platform plugin could be initialized". Nothing in that names a
 # missing package. The headless build never hits it - -no-window skips the UI entirely - so
 # it only shows up the first time someone starts a windowed emulator over RDP.
-sudo apt-get install -y \
+apt_get install -y \
     qemu-kvm \
     libvirt-daemon-system \
     libpulse0 \
@@ -45,14 +53,28 @@ sudo apt-get install -y \
 echo "==> KVM access for the dev user"
 sudo usermod -aG kvm "$USER"
 
-echo "==> command line tools"
+echo "==> bootstrap command line tools"
+# Google publishes no stable "latest" URL for this zip, only build-numbered files that age. So
+# treat it as a BOOTSTRAP whose only job is to provide a sdkmanager, which then installs the
+# current release of itself - the pin costs a download rather than a stale toolchain.
+#
+# It must unpack somewhere other than cmdline-tools/latest, which is where the real install
+# has to land. sdkmanager will not install over an existing directory, and it does not fail
+# either: it diverts to cmdline-tools/latest-2, and from then on every sdkmanager and
+# avdmanager invocation prints
+#   Warning: Observed package id 'cmdline-tools;latest' in inconsistent location
+#            '.../cmdline-tools/latest-2' (Expected '.../cmdline-tools/latest')
+# once per repository it consults, while PATH still resolves to the stale bootstrap copy in
+# latest/ - so the update silently did nothing except ship a second ~130 MB copy in the image.
+# Unpacking beside it instead leaves latest/ free for the install below.
+BOOTSTRAP_TOOLS="$ANDROID_HOME/cmdline-tools/bootstrap"
 mkdir -p "$ANDROID_HOME/cmdline-tools"
 curl -fsSL -o /tmp/cmdline-tools.zip "$CMDLINE_TOOLS_URL"
-rm -rf /tmp/cmdline-tools && mkdir -p /tmp/cmdline-tools
+rm -rf /tmp/cmdline-tools "$BOOTSTRAP_TOOLS" "$ANDROID_HOME/cmdline-tools/latest"
+mkdir -p /tmp/cmdline-tools
 unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
-# The zip unpacks as cmdline-tools/; sdkmanager insists on living in <sdk>/cmdline-tools/latest.
-rm -rf "$ANDROID_HOME/cmdline-tools/latest"
-mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+# The zip unpacks as cmdline-tools/.
+mv /tmp/cmdline-tools/cmdline-tools "$BOOTSTRAP_TOOLS"
 rm -rf /tmp/cmdline-tools /tmp/cmdline-tools.zip
 
 echo "==> environment (system-wide, so login shells and cloud-init both see it)"
@@ -65,15 +87,23 @@ sudo chmod 644 /etc/profile.d/android.sh
 # shellcheck disable=SC1091
 source /etc/profile.d/android.sh
 
-echo "==> updating the command line tools to the current release"
-# The zip above is a bootstrap: Google publishes no stable "latest" URL, so the only way to
-# get a sdkmanager at all is a build-numbered file that ages. Now that one exists, let it
-# replace itself with the current release, so the pin costs a download rather than a stale
-# toolchain.
+echo "==> installing the current command line tools release"
+# Run the bootstrap sdkmanager by path, not through PATH: PATH already points at latest/bin,
+# which is exactly the directory this install is about to create. --sdk_root is belt and
+# braces - sdkmanager infers the root from its own location, and bootstrap/ sits at the same
+# depth as latest/, so it would infer the same answer.
 # Licences have to be accepted before this install too, not just the big one below - see the
 # long comment there for why the answers arrive as a here-string and never through a pipe.
-sdkmanager --licenses >/dev/null <<< "$(printf 'y\n%.0s' $(seq 100))"
-sdkmanager --install "cmdline-tools;latest"
+"$BOOTSTRAP_TOOLS/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null <<< "$(printf 'y\n%.0s' $(seq 100))"
+"$BOOTSTRAP_TOOLS/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --install "cmdline-tools;latest"
+rm -rf "$BOOTSTRAP_TOOLS"
+
+# Everything from here uses the release just installed. Fail loudly if it landed anywhere but
+# latest/ - a silent divert is the failure this whole dance exists to avoid, and it is much
+# cheaper to catch now than as warnings in a finished image.
+hash -r
+[ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ] \
+    || { echo "ERROR: cmdline-tools;latest did not install into cmdline-tools/latest" >&2; exit 1; }
 
 # `sdkmanager --list` prints "package | version | description | location" over several
 # sections. Squeezing out spaces and taking the first column gives bare package ids to match
@@ -99,12 +129,20 @@ if [ -z "$ANDROID_API" ]; then
 fi
 
 if [ -z "$ANDROID_BUILD_TOOLS" ]; then
-    echo "==> resolving the newest stable build-tools"
+    echo "==> resolving the newest stable build-tools for API ${ANDROID_API}"
+    # Capped at the resolved API for the same reason the API is keyed on the system image:
+    # build-tools majors track API levels (the 36.x line belongs to API 36), and Google ships
+    # the next major long before the matching platform and emulator image exist. Taking the
+    # newest overall therefore pairs build-tools 37 with API 36 - not broken, but no AGP will
+    # select it, so the first project build downloads the right one anyway and the ~100 MB in
+    # the image is dead weight. Capping keeps the two halves of the SDK on the same release.
     ANDROID_BUILD_TOOLS="$(sdk_packages \
         | grep -E '^build-tools;[0-9]+\.[0-9]+\.[0-9]+$' \
         | cut -d';' -f2 \
+        | awk -F. -v api="$ANDROID_API" '$1 <= api' \
         | sort -V | tail -n1)"
-    [ -n "$ANDROID_BUILD_TOOLS" ] || { echo "ERROR: no stable build-tools found" >&2; exit 1; }
+    [ -n "$ANDROID_BUILD_TOOLS" ] \
+        || { echo "ERROR: no stable build-tools at or below API ${ANDROID_API}" >&2; exit 1; }
 fi
 
 SYSTEM_IMAGE="system-images;android-${ANDROID_API};google_apis;x86_64"

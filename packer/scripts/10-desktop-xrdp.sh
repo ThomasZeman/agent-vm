@@ -6,11 +6,19 @@
 
 set -euo pipefail
 
-export DEBIAN_FRONTEND=noninteractive
+# sudo runs with env_reset, so an exported DEBIAN_FRONTEND never reaches the apt-get on the
+# other side of it - which is what fills the build log with "debconf: unable to initialize
+# frontend: Dialog" and two more lines walking down to Teletype. Passing the settings as sudo
+# arguments is the form that survives. NEEDRESTART_SUSPEND silences the apt hook that lists
+# deferred restarts and outdated sessions: accurate, and meaningless for a machine that is
+# about to be shut down and imaged.
+apt_get() {
+    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "$@"
+}
 
 echo "==> apt update / upgrade"
-sudo apt-get update
-sudo apt-get -y upgrade
+apt_get update
+apt_get -y upgrade
 
 echo "==> XFCE, xrdp and the tools every VM needs"
 # Core XFCE, no full Xubuntu application set. This used to be the "xubuntu-core^" tasksel
@@ -20,7 +28,7 @@ echo "==> XFCE, xrdp and the tools every VM needs"
 # needs no task metadata, and pulls the same session pieces we actually use over xrdp:
 # xfce4-session, xfwm4, xfce4-panel, xfdesktop4, xfce4-settings, thunar. No greeter/display
 # manager is needed - the xrdp session is launched straight from ~/.xsession below.
-sudo apt-get install -y \
+apt_get install -y \
     xfce4 \
     xrdp \
     dbus-x11 \
@@ -65,7 +73,7 @@ chmod 644 "$HOME/.xsession"
 
 # light-locker over xrdp is the classic "black screen after reconnect" bug, and a screen
 # lock is pointless on a disposable VM behind the host firewall.
-sudo apt-get purge -y light-locker || true
+apt_get purge -y light-locker || true
 mkdir -p "$HOME/.config/autostart"
 cat > "$HOME/.config/autostart/xfce4-screensaver.desktop" <<'DESKTOP'
 [Desktop Entry]

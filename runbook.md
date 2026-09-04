@@ -167,7 +167,8 @@ sudo mkdir -p /usr/local/var/run/watchman && sudo chmod 2777 /usr/local/var/run/
 
 ```bash
 sudo apt-get install -y qemu-kvm libvirt-daemon-system libpulse0 libnss3 libxcomposite1 \
-  libxcursor1 libxi6 libxtst6 libasound2t64 libgl1 libc++1 android-sdk-platform-tools-common
+  libxcursor1 libxi6 libxtst6 libasound2t64 libgl1 libc++1 libxcb-cursor0 socat \
+  android-sdk-platform-tools-common
 sudo usermod -aG kvm "$USER"
 
 curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip

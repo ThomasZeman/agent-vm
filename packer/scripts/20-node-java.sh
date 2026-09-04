@@ -3,14 +3,22 @@
 
 set -euo pipefail
 
-export DEBIAN_FRONTEND=noninteractive
+# sudo runs with env_reset, so an exported DEBIAN_FRONTEND never reaches the apt-get on the
+# other side of it - which is what fills the build log with "debconf: unable to initialize
+# frontend: Dialog" and two more lines walking down to Teletype. Passing the settings as sudo
+# arguments is the form that survives. NEEDRESTART_SUSPEND silences the apt hook that lists
+# deferred restarts and outdated sessions: accurate, and meaningless for a machine that is
+# about to be shut down and imaged.
+apt_get() {
+    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "$@"
+}
 
 : "${NODE_MAJOR:=22}"
 # Empty means "resolve the newest release that actually ships a linux build" - see below.
 : "${WATCHMAN_VERSION:=}"
 
 echo "==> OpenJDK 17 (Gradle's supported JDK for current AGP)"
-sudo apt-get install -y openjdk-17-jdk
+apt_get install -y openjdk-17-jdk
 
 echo "==> JAVA_HOME (system-wide)"
 # Gradle finds a JDK on PATH, but the React Native and Capacitor CLIs read JAVA_HOME
@@ -27,11 +35,11 @@ echo "==> C/C++ toolchain"
 # build Hermes and the JSI native modules. Without these, "npm install" and the first
 # ./gradlew assembleDebug fail on a missing compiler, deep inside build output that does
 # not obviously say so.
-sudo apt-get install -y     build-essential     cmake     ninja-build     pkg-config     python3-dev
+apt_get install -y     build-essential     cmake     ninja-build     pkg-config     python3-dev
 
 echo "==> Node ${NODE_MAJOR}.x from NodeSource"
 curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
-sudo apt-get install -y nodejs
+apt_get install -y nodejs
 
 echo "==> watchman (optional)"
 # Not packaged for Ubuntu, so this takes the prebuilt release zip - but that asset is
@@ -58,7 +66,7 @@ install_watchman() {
     zip=/tmp/watchman.zip
     curl -fsSL -o "$zip" "$url" || { echo "    download failed: $url" >&2; return 1; }
 
-    sudo apt-get install -y libssl-dev || return 1
+    apt_get install -y libssl-dev || return 1
     rm -rf /tmp/watchman && mkdir -p /tmp/watchman
     unzip -q "$zip" -d /tmp/watchman || return 1
     dir="$(find /tmp/watchman -maxdepth 1 -mindepth 1 -type d | head -n1)"
