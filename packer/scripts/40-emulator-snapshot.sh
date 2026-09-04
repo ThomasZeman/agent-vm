@@ -52,8 +52,28 @@ done
 
 # The first boot keeps working for a while after boot_completed (package optimisation,
 # GMS setup). Snapshotting mid-storm produces a snapshot that resumes into that same storm.
+#
+# init.svc.bootanim going to "stopped" is the usual "the storm is over" signal, but it is
+# only a signal when the service actually ran. We boot with -no-boot-anim, and an image that
+# never starts bootanim leaves the property unset - so waiting for the literal string
+# "stopped" waits forever, and an in-guest `while` loop has nothing to stop it: the build
+# sits here until Packer's 30m provisioner timeout kills it. Hence: unset means there is
+# nothing to wait for, and the wait has a deadline, so a genuinely stuck bootanim costs a
+# warning rather than the whole build.
 echo "==> settling"
-adb shell 'while [ "$(getprop init.svc.bootanim)" != "stopped" ]; do sleep 2; done'
+deadline=$(( $(date +%s) + 300 ))
+while :; do
+    bootanim="$(adb shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r' || true)"
+    case "$bootanim" in
+        ""|stopped) break ;;
+    esac
+    if [ "$(date +%s)" -gt "$deadline" ]; then
+        echo "WARNING: init.svc.bootanim is still '${bootanim}' after 5 minutes." >&2
+        echo "         Snapshotting anyway; the snapshot may resume into a busy boot." >&2
+        break
+    fi
+    sleep 2
+done
 sleep 30
 
 echo "==> disabling animations (steadier screenshots, faster agent loops)"

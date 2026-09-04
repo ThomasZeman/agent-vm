@@ -394,14 +394,24 @@ write_files:
       ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET}
       ANDROID_SERIAL=${DEVICE_SERIAL}
 runcmd:
+  # Every entry is a YAML *sequence* (an argv list), not a bare string, and each shell
+  # fragment is single-quoted. This is not style. A plain YAML scalar that contains ": "
+  # is a mapping, so
+  #     - sudo -u dev bash -lc '... || echo "WARNING: no emulator after 180s"'
+  # parses as a dict, cc_runcmd cannot shellify a dict, and the module dies with a
+  # TypeError that takes *every other line in runcmd* down with it - no ~/app, no
+  # emulator, no tmux session. The VM still answers SSH and looks healthy; the only place
+  # that says otherwise is `cloud-init status --long` inside the guest. Keep new entries
+  # in this form and a colon in a message stays harmless.
+  #
   # Just the directory - no clone. cloud-init runs before anyone can authenticate, so an
   # unattended checkout of a private repo would need a credential baked into the image or
   # written onto this seed ISO, which stays attached and readable inside the guest for the
   # life of the VM. The checkout is an interactive step over SSH instead; this only has to
   # exist so the tmux session below has a working directory.
-  - sudo -u dev mkdir -p /home/dev/app
+  - [sudo, -u, dev, mkdir, -p, /home/dev/app]
   # Emulator only when no phone is assigned to this VM
-  - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true'
+  - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true']
   # Wait for the emulator to register, but do NOT run `adb tcpip 5555` here. That switches
   # the guest Android's adbd to TCP mode behind qemu's NAT - unreachable from the host
   # either way - and knocks the emulator off this VM's own adb server, after which a local
@@ -411,8 +421,8 @@ runcmd:
   # registers, and it is the second-to-last thing in runcmd - so a failed emulator start does
   # not just cost you the emulator, it wedges cloud-init and the tmux session below never
   # runs. That failure is silent: the VM answers SSH and looks healthy.
-  - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20; timeout 180 adb wait-for-device || echo "WARNING: no emulator after 180s - see /tmp/emu.log") || true'
-  - sudo -u dev tmux new -d -s agent -c /home/dev/app
+  - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20; timeout 180 adb wait-for-device || echo "WARNING: no emulator after 180s - see /tmp/emu.log") || true']
+  - [sudo, -u, dev, tmux, new, -d, -s, agent, -c, /home/dev/app]
 '@
 
 $metaDataTemplate = @'
@@ -598,7 +608,10 @@ if ($DeviceSerial) {
     Write-Host "  Screen      : scrcpy -s $DeviceSerial          # on the host, over USB"
 } else {
     Write-Host "  Emulator    : adb connect ${ip}:5555            # on the host"
-    Write-Host "  Screenshot  : adb -s ${ip}:5555 exec-out screencap -p > screen.png"
+    # NOT `exec-out screencap -p > screen.png`. PowerShell's `>` is a text redirect: it
+    # decodes the PNG bytes as text and re-encodes them as UTF-8 with a BOM, and the file
+    # that lands is not a PNG. screencap-to-file plus pull is byte-exact in every shell.
+    Write-Host "  Screenshot  : adb -s ${ip}:5555 shell screencap -p /sdcard/s.png; adb -s ${ip}:5555 pull /sdcard/s.png screen.png"
 }
 Write-Host "  Metro       : http://${ip}:8081"
 Write-Host ''

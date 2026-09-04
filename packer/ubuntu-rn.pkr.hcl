@@ -118,11 +118,13 @@ variable "android_build_tools" {
 
 variable "android_cmdline_tools_url" {
   type = string
-  # Bootstrap only. Google publishes no stable "latest" URL, so this pinned zip is just the
-  # way to obtain a working sdkmanager; 30-android-sdk.sh then immediately installs
-  # "cmdline-tools;latest" through it, which is what the image actually keeps. A stale pin
-  # here therefore costs one extra download, not an out-of-date toolchain.
-  description = "Bootstrap sdkmanager. The image ships whatever `cmdline-tools;latest` resolves to."
+  # Build-time only. Google publishes no stable "latest" URL, so this pinned zip is the way to
+  # obtain a sdkmanager; 30-android-sdk.sh resolves and installs everything through it and
+  # then installs "cmdline-tools;latest", which is what the image actually keeps. Pinning it
+  # is also what keeps the resolver's parsing stable - the current "latest" replaced the Java
+  # sdkmanager with a shim over a new `android` CLI that prints a different format entirely.
+  # A stale pin here therefore costs one extra download, not an out-of-date toolchain.
+  description = "Build-time sdkmanager. The image ships whatever `cmdline-tools;latest` resolves to."
   default     = "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 }
 

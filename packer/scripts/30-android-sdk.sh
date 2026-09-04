@@ -87,23 +87,48 @@ sudo chmod 644 /etc/profile.d/android.sh
 # shellcheck disable=SC1091
 source /etc/profile.d/android.sh
 
-echo "==> installing the current command line tools release"
-# Run the bootstrap sdkmanager by path, not through PATH: PATH already points at latest/bin,
-# which is exactly the directory this install is about to create. --sdk_root is belt and
-# braces - sdkmanager infers the root from its own location, and bootstrap/ sits at the same
-# depth as latest/, so it would infer the same answer.
-# Licences have to be accepted before this install too, not just the big one below - see the
-# long comment there for why the answers arrive as a here-string and never through a pipe.
-"$BOOTSTRAP_TOOLS/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null <<< "$(printf 'y\n%.0s' $(seq 100))"
-"$BOOTSTRAP_TOOLS/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --install "cmdline-tools;latest"
-rm -rf "$BOOTSTRAP_TOOLS"
+# The BUILD is driven by the bootstrap sdkmanager from here on, and only the image's copy of
+# cmdline-tools is "latest". That split is deliberate.
+#
+# cmdline-tools 23.0 - the current "latest" - no longer ships the Java sdkmanager at all.
+# bin/sdkmanager is now a shell shim that announces "The SDK Manager CLI tool (sdkmanager) is
+# deprecated" and forwards to a new native `android` CLI, which:
+#
+#   * downloads itself on first run ("Downloading Android CLI...") and prints a Terms of
+#     Service and telemetry banner,
+#   * lists packages as slash-separated, column-aligned rows -
+#         system-images/android-36/google_apis/x86_64   7.0.0   Google APIs Intel x86_64 ...
+#     not the ";"-separated "package | version | description | location" table parsed below,
+#   * makes --licenses a no-op ("Warning: The --licenses option is no longer needed."), and
+#   * exits NON-ZERO after a successful list: 127 on Linux, a 0xC0000409 crash on Windows.
+#
+# The first of those already cost a build. The resolver below found nothing in the new format,
+# grep exited 1, `set -o pipefail` failed the pipeline, and because the pipeline was the right
+# hand side of an assignment, `set -e` killed the script inside the command substitution -
+# before the guard that would have said so. All 16 minutes of it ended with "==> resolving the
+# newest API with a google_apis x86_64 system image" as the last line and no error.
+#
+# The bootstrap is a pinned zip, so its sdkmanager is a Java one whose output format is fixed
+# by the pin rather than by whatever Google shipped this month. So resolve and install through
+# it, and install cmdline-tools;latest at the very end, once nothing left in the build has to
+# parse a package list. The image still ships current tooling; only the build stops depending
+# on it.
+#
+# Called by path, never through PATH: PATH already points at latest/bin, which does not exist
+# yet. --sdk_root is belt and braces - sdkmanager infers the root from its own location, and
+# bootstrap/ sits at the same depth as latest/, so it would infer the same answer.
+SDKMANAGER="$BOOTSTRAP_TOOLS/bin/sdkmanager"
 
-# Everything from here uses the release just installed. Fail loudly if it landed anywhere but
-# latest/ - a silent divert is the failure this whole dance exists to avoid, and it is much
-# cheaper to catch now than as warnings in a finished image.
-hash -r
-[ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ] \
-    || { echo "ERROR: cmdline-tools;latest did not install into cmdline-tools/latest" >&2; exit 1; }
+echo "==> accepting SDK licences"
+# `yes | sdkmanager --licenses` is the incantation every guide prints, and under
+# `set -o pipefail` it fails the build even when the licences are accepted perfectly.
+# sdkmanager reads the handful of "y" answers it wants and exits 0; `yes` then writes into
+# a closed pipe, dies of SIGPIPE, and pipefail reports the pipeline as 128+13 = 141 - which
+# arrives as "Script exited with non-zero exit status: 141" with no other diagnostic,
+# nineteen minutes into the build. A here-string is not a pipeline, so there is no second
+# process whose death can fail the script. Android asks for ~7 licences; 100 answers is
+# room to spare, and unread lines are simply discarded when sdkmanager closes stdin.
+"$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null <<< "$(printf 'y\n%.0s' $(seq 100))"
 
 # `sdkmanager --list` prints "package | version | description | location" over several
 # sections. Squeezing out spaces and taking the first column gives bare package ids to match
@@ -111,8 +136,13 @@ hash -r
 # ("build-tools;36.0.0-rc1", "platforms;android-VanillaIceCream"), which are exactly what you
 # do not want a golden image built against.
 sdk_packages() {
-    sdkmanager --list 2>/dev/null | tr -d ' ' | cut -d'|' -f1
+    "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --list 2>/dev/null | tr -d ' ' | cut -d'|' -f1
 }
+
+# Every resolver below ends in `|| true`, and every one is followed by a guard that reports
+# what went wrong. Without it an empty result is a grep exit of 1, and under `set -e` the
+# script dies at the assignment - the guard is unreachable and the build ends on the echo
+# above it. `|| true` is what makes these diagnostics reachable at all.
 
 if [ -z "$ANDROID_API" ]; then
     echo "==> resolving the newest API with a google_apis x86_64 system image"
@@ -124,8 +154,15 @@ if [ -z "$ANDROID_API" ]; then
     ANDROID_API="$(sdk_packages \
         | grep -E '^system-images;android-[0-9]+;google_apis;x86_64$' \
         | cut -d';' -f2 | cut -d- -f2 \
-        | sort -n | tail -n1)"
-    [ -n "$ANDROID_API" ] || { echo "ERROR: no google_apis x86_64 system image found" >&2; exit 1; }
+        | sort -n | tail -n1 || true)"
+    if [ -z "$ANDROID_API" ]; then
+        echo "ERROR: no 'system-images;android-N;google_apis;x86_64' package in sdkmanager --list." >&2
+        echo "       Either the repository really has none, or sdkmanager stopped printing the" >&2
+        echo "       ';'-separated 'package | version | description' table this parses (that is" >&2
+        echo "       what cmdline-tools 23.0 did - see the note above SDKMANAGER). Compare:" >&2
+        echo "         $SDKMANAGER --sdk_root=$ANDROID_HOME --list | head -n 20" >&2
+        exit 1
+    fi
 fi
 
 if [ -z "$ANDROID_BUILD_TOOLS" ]; then
@@ -140,7 +177,7 @@ if [ -z "$ANDROID_BUILD_TOOLS" ]; then
         | grep -E '^build-tools;[0-9]+\.[0-9]+\.[0-9]+$' \
         | cut -d';' -f2 \
         | awk -F. -v api="$ANDROID_API" '$1 <= api' \
-        | sort -V | tail -n1)"
+        | sort -V | tail -n1 || true)"
     [ -n "$ANDROID_BUILD_TOOLS" ] \
         || { echo "ERROR: no stable build-tools at or below API ${ANDROID_API}" >&2; exit 1; }
 fi
@@ -149,23 +186,32 @@ SYSTEM_IMAGE="system-images;android-${ANDROID_API};google_apis;x86_64"
 echo "    API ${ANDROID_API}, build-tools ${ANDROID_BUILD_TOOLS}"
 
 echo "==> SDK packages (this is the long one: the system image is ~1.5 GB)"
-# `yes | sdkmanager --licenses` is the incantation every guide prints, and under
-# `set -o pipefail` it fails the build even when the licences are accepted perfectly.
-# sdkmanager reads the handful of "y" answers it wants and exits 0; `yes` then writes into
-# a closed pipe, dies of SIGPIPE, and pipefail reports the pipeline as 128+13 = 141 - which
-# arrives as "Script exited with non-zero exit status: 141" with no other diagnostic,
-# nineteen minutes into the build. A here-string is not a pipeline, so there is no second
-# process whose death can fail the script. Android asks for ~7 licences; 100 answers is
-# room to spare, and unread lines are simply discarded when sdkmanager closes stdin.
-sdkmanager --licenses >/dev/null <<< "$(printf 'y\n%.0s' $(seq 100))"
-sdkmanager --install \
+"$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
     "platform-tools" \
     "emulator" \
     "platforms;android-${ANDROID_API}" \
     "build-tools;${ANDROID_BUILD_TOOLS}" \
     "$SYSTEM_IMAGE"
 
+echo "==> installing the current command line tools release"
+# Last, deliberately: nothing after this parses a package list, so whatever shape the current
+# release's sdkmanager has cannot break the build (see the note above SDKMANAGER). It lands in
+# cmdline-tools/latest, which is free because the bootstrap was unpacked beside it - see the
+# "==> bootstrap command line tools" comment for what happens when it is not.
+"$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "cmdline-tools;latest"
+rm -rf "$BOOTSTRAP_TOOLS"
+
+# Fail loudly if it landed anywhere but latest/ - a silent divert is the failure that whole
+# dance exists to avoid, and it is much cheaper to catch now than as warnings in a finished
+# image.
+hash -r
+[ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ] \
+    || { echo "ERROR: cmdline-tools;latest did not install into cmdline-tools/latest" >&2; exit 1; }
+
 echo "==> AVD ${AVD_NAME}"
+# avdmanager, unlike sdkmanager, is still the classic Java launcher in cmdline-tools 23.0, so
+# this is the release just installed and it behaves as it always has. It needs a JDK on PATH
+# or JAVA_HOME - 20-node-java.sh installs OpenJDK 17, which is what these classes target.
 # Same reasoning as the licences above: answers on stdin, not through a pipe. ("no" declines
 # avdmanager's "do you want to create a custom hardware profile?" prompt.)
 avdmanager create avd \
@@ -296,7 +342,12 @@ echo "==> versions"
 # the build date, and the only record of it is this line in the build log.
 echo "api: ${ANDROID_API}  build-tools: ${ANDROID_BUILD_TOOLS}"
 echo "system image: ${SYSTEM_IMAGE}"
-sdkmanager --version
+# Read the revision off the package rather than running `sdkmanager --version`: in
+# cmdline-tools 23.0 that forwards to `android --version`, which downloads the new Android CLI
+# on first use, prints a Terms of Service banner, answers "unknown (Android CLI)" if the
+# download did not land, and exits non-zero either way - a build failure in a line whose only
+# job is to print a version number.
+echo "cmdline-tools: $(sed -n 's/^Pkg\.Revision=//p' "$ANDROID_HOME/cmdline-tools/latest/source.properties")"
 "$ANDROID_HOME/platform-tools/adb" --version | head -n1
 
 echo "==> 30-android-sdk.sh done"

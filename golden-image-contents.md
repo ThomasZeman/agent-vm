@@ -45,8 +45,8 @@ time.
   | `max_bpp` | 32 | colours must arrive as sent |
   | `bitmap_compression` | false | |
   | `bulk_compression` | false | |
-  | `rfx_compression` | false | a client must not negotiate a lossy codec behind your back |
-  | `jpeg_compression` | false | |
+  | `rfx_compression` | false — *only rewritten where the shipped `xrdp.ini` has the key; xrdp 0.10 on 24.04 does not, so there is no codec line to disable* | a client must not negotiate a lossy codec behind your back |
+  | `jpeg_compression` | as above | |
   | `new_cursors` | true | |
   | `use_fastpath` | both | |
 
@@ -109,7 +109,7 @@ exists.
 
 | Package | Version |
 |---|---|
-| `cmdline-tools;latest` | current — the pinned zip only bootstraps `sdkmanager`, which then updates itself |
+| `cmdline-tools;latest` | current — the pinned zip is only the build's own `sdkmanager`, and installs this at the end. Since 23.0 the `sdkmanager` here is a shim over a new `android` CLI that downloads itself on first run; `avdmanager` is still the classic tool |
 | `platform-tools` (`adb`) | current |
 | `emulator` | current |
 | `platforms;android-<API>` | newest bootable API (`android_api` to pin) |
@@ -148,9 +148,10 @@ There is no GPU passthrough into Hyper-V Linux guests, so the software rasterize
 option — and it renders React Native UI accurately, which is what this image is for.
 
 **The `golden` snapshot** is the reason the image is worth building. `40-emulator-snapshot.sh`
-cold-boots the AVD once, waits for `sys.boot_completed`, then waits for `init.svc.bootanim` to
-stop and sleeps a further 30 s so the snapshot is not taken mid-storm of package optimisation
-and GMS setup. It zeroes the three animation scales, saves the snapshot, and verifies it hit
+cold-boots the AVD once, waits for `sys.boot_completed`, then waits up to 5 minutes for
+`init.svc.bootanim` to stop — treating the property being unset as "the image never started
+bootanim, so there is nothing to wait for" — and sleeps a further 30 s so the snapshot is not
+taken mid-storm of package optimisation and GMS setup. It zeroes the three animation scales, saves the snapshot, and verifies it hit
 the disk.
 
 A cloned VM resumes it in **~15 seconds**, against 60–90 s for a cold boot. Start it with
@@ -318,8 +319,8 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | Ubuntu packages | `apt-get upgrade` in `10-desktop-xrdp.sh` | current archive |
 | Node | NodeSource `setup_22.x` | newest 22.x |
 | OpenJDK | `openjdk-17-jdk` from the archive | newest 17.x |
-| Android API + system image | newest API that has a `google_apis;x86_64` image | resolved by `sdkmanager --list` |
-| Android build-tools | newest stable with a major <= the resolved API | resolved by `sdkmanager --list` |
+| Android API + system image | newest API that has a `google_apis;x86_64` image | resolved by the build's pinned `sdkmanager --list` |
+| Android build-tools | newest stable with a major <= the resolved API | resolved by the build's pinned `sdkmanager --list` |
 | `cmdline-tools` | bootstrapped from a pinned zip, then `sdkmanager --install "cmdline-tools;latest"` | current |
 | `platform-tools` (adb), `emulator` | `sdkmanager --install` with no revision | current |
 | VS Code | Microsoft `stable` channel | current |
