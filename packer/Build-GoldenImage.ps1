@@ -102,7 +102,18 @@ param(
 
     # Per-keystroke delay for the GRUB boot command. Packer reads this from the environment
     # only; there is no template setting for it.
-    [string]$KeyInterval = '100ms'
+    [string]$KeyInterval = '100ms',
+
+    # Which Ubuntu series to build. The exact point release is resolved at build time, so
+    # this stays correct as 24.04.x advances - see Resolve-UbuntuIso.
+    [string]$UbuntuSeries = '24.04',
+
+    # Escape hatch: build a specific ISO instead of the current point release. Pass
+    # -IsoChecksum with it, or the template's default (the live SHA256SUMS) is used, which
+    # only works while that ISO is still the current one.
+    [string]$IsoUrl,
+
+    [string]$IsoChecksum
 )
 
 $ErrorActionPreference = 'Stop'
@@ -110,6 +121,81 @@ Set-StrictMode -Version Latest
 
 function Write-Step { param([string]$Text) Write-Host "==> $Text" -ForegroundColor Cyan }
 function Write-Note { param([string]$Text) Write-Host "    $Text" -ForegroundColor DarkGray }
+
+function Resolve-UbuntuIso {
+    <#
+        Returns the CURRENT point release of a series, with its checksum, by reading the
+        published SHA256SUMS and taking the highest version in it.
+
+        This exists because pinning an ISO by filename is a time bomb. releases.ubuntu.com
+        keeps only the newest point release or two, so a hard-coded
+        "ubuntu-24.04.3-live-server-amd64.iso" stops resolving the moment 24.04.5 ships -
+        and because iso_checksum reads the live SHA256SUMS, the checksum line disappears in
+        the same instant. The build then dies at the download with an error that says
+        nothing about a stale pin, months after anyone touched the file.
+
+        Resolving both from one fetch also keeps them consistent by construction: the
+        checksum returned here is the checksum OF the URL returned here, which a separate
+        iso_url / iso_checksum pair cannot guarantee.
+
+        Deliberately takes the newest: this image is meant to ship current everything.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Series)
+
+    $sumsUrl = "https://releases.ubuntu.com/$Series/SHA256SUMS"
+
+    $previous = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        $sums = Invoke-WebRequest -Uri $sumsUrl -UseBasicParsing -TimeoutSec 30
+    }
+    catch {
+        throw "Could not fetch $sumsUrl to resolve the Ubuntu ISO: $($_.Exception.Message)"
+    }
+    finally {
+        $ProgressPreference = $previous
+    }
+
+    # releases.ubuntu.com serves SHA256SUMS with NO Content-Type header, so Windows
+    # PowerShell 5.1 cannot decide it is text and hands back a System.Byte[]. Splitting that
+    # on newlines silently yields one useless string of decimal byte values - the regex below
+    # then matches nothing and the function reports "no ISO found in SHA256SUMS", which reads
+    # exactly like a wrong series or a bad URL. Decode explicitly rather than trusting the
+    # header to be there.
+    $content = $sums.Content
+    if ($content -is [byte[]]) {
+        $content = [Text.Encoding]::UTF8.GetString($content)
+    }
+
+    # e.g. "e907d92... *ubuntu-24.04.4-live-server-amd64.iso". The version group tolerates a
+    # series with no point release (the .0 of a series is published as plain "24.04").
+    $pattern = '^(?<sha>[0-9a-fA-F]{64})\s+\*?(?<file>ubuntu-(?<ver>' +
+               [regex]::Escape($Series) + '(?:\.\d+)?)-live-server-amd64\.iso)$'
+
+    $candidates = @()
+    foreach ($line in ($content -split "`r?`n")) {
+        $match = [regex]::Match($line.Trim(), $pattern)
+        if ($match.Success) {
+            $candidates += [pscustomobject]@{
+                Version = [version]$match.Groups['ver'].Value
+                File    = $match.Groups['file'].Value
+                Sha256  = $match.Groups['sha'].Value.ToLowerInvariant()
+            }
+        }
+    }
+
+    if ($candidates.Count -eq 0) {
+        throw "No ubuntu-$Series[.x]-live-server-amd64.iso found in $sumsUrl. Check that '$Series' is a released series."
+    }
+
+    $latest = $candidates | Sort-Object Version -Descending | Select-Object -First 1
+    [pscustomobject]@{
+        Url      = "https://releases.ubuntu.com/$Series/$($latest.File)"
+        Checksum = "sha256:$($latest.Sha256)"
+        File     = $latest.File
+    }
+}
 
 function Stop-StaleVm {
     <#
@@ -271,6 +357,21 @@ if (-not $SkipBuild) {
         Remove-Item -LiteralPath $BuildDirectory -Recurse -Force
     }
 
+    # Resolve the ISO before anything expensive happens: a wrong series or an unreachable
+    # releases.ubuntu.com should fail here, in a second, not 20 minutes into a build.
+    if ($IsoUrl) {
+        $isoArgs = @('-var', "iso_url=$IsoUrl")
+        if ($IsoChecksum) { $isoArgs += @('-var', "iso_checksum=$IsoChecksum") }
+        Write-Step 'Ubuntu ISO (explicit)'
+        Write-Note $IsoUrl
+    }
+    else {
+        Write-Step "Resolving the current Ubuntu $UbuntuSeries ISO"
+        $iso = Resolve-UbuntuIso -Series $UbuntuSeries
+        $isoArgs = @('-var', "iso_url=$($iso.Url)", '-var', "iso_checksum=$($iso.Checksum)")
+        Write-Note "$($iso.File) - $($iso.Checksum)"
+    }
+
     Write-Step 'packer init'
     & packer init $PackerDirectory
     if ($LASTEXITCODE -ne 0) { throw "packer init failed with exit code $LASTEXITCODE" }
@@ -280,6 +381,7 @@ if (-not $SkipBuild) {
     # 20 minutes in, on an installer prompt nobody is going to answer.
     Write-Step 'packer validate'
     & packer validate `
+        @isoArgs `
         -var "output_directory=$($BuildDirectory -replace '\\', '/')" `
         -var "switch_name=$SwitchName" `
         -var "vm_name=$VmName" `
@@ -308,6 +410,7 @@ if (-not $SkipBuild) {
 
     $started = Get-Date
     & packer build `
+        @isoArgs `
         -var "output_directory=$($BuildDirectory -replace '\\', '/')" `
         -var "switch_name=$SwitchName" `
         -var "vm_name=$VmName" `

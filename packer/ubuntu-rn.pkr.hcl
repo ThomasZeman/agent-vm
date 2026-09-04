@@ -20,13 +20,24 @@ packer {
 # ------------------------------------------------------------------ inputs ---
 
 variable "iso_url" {
-  type    = string
-  default = "https://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso"
+  type = string
+  # Build-GoldenImage.ps1 OVERRIDES this: it reads the published SHA256SUMS and passes the
+  # current point release plus its literal checksum, so the build always installs the newest
+  # 24.04.x without anyone editing this file.
+  #
+  # This default only applies to a bare `packer build`, and it goes stale on its own:
+  # releases.ubuntu.com/24.04/ keeps only the newest point release or two, so both the ISO
+  # and its line in SHA256SUMS disappear when the next one ships. Prefer the wrapper.
+  description = "Overridden by Build-GoldenImage.ps1 with the current point release. Only used for a bare `packer build`, and goes stale as 24.04.x advances."
+  default     = "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
 }
 
 variable "iso_checksum" {
-  type        = string
-  description = "sha256 of the ISO; from https://releases.ubuntu.com/24.04/SHA256SUMS"
+  type = string
+  # "file:" fetches the live sums list and looks up iso_url's filename in it, so this default
+  # is only correct while iso_url names the CURRENT point release - the two go stale together.
+  # Build-GoldenImage.ps1 replaces both with a matched pair resolved from one fetch.
+  description = "Overridden by Build-GoldenImage.ps1 with the literal sha256 of the resolved ISO."
   default     = "file:https://releases.ubuntu.com/24.04/SHA256SUMS"
 }
 
@@ -94,18 +105,25 @@ variable "disk_size" {
 
 # Toolchain versions. Bump these to rebuild the image on an upgrade (section 12).
 variable "android_api" {
-  type    = number
-  default = 35
+  type        = string
+  description = "Android API level for the platform, system image and AVD. Empty (the default) resolves the newest API that has a google_apis x86_64 system image - without one there is nothing to boot."
+  default     = ""
 }
 
 variable "android_build_tools" {
-  type    = string
-  default = "35.0.0"
+  type        = string
+  description = "Empty (the default) resolves the newest stable build-tools; release candidates are skipped."
+  default     = ""
 }
 
 variable "android_cmdline_tools_url" {
-  type    = string
-  default = "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+  type = string
+  # Bootstrap only. Google publishes no stable "latest" URL, so this pinned zip is just the
+  # way to obtain a working sdkmanager; 30-android-sdk.sh then immediately installs
+  # "cmdline-tools;latest" through it, which is what the image actually keeps. A stale pin
+  # here therefore costs one extra download, not an out-of-date toolchain.
+  description = "Bootstrap sdkmanager. The image ships whatever `cmdline-tools;latest` resolves to."
+  default     = "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 }
 
 variable "avd_name" {

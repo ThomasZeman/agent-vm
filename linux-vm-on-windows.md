@@ -4,6 +4,9 @@ A design for running *N* isolated Linux VMs on one Ryzen workstation, each with 
 hardware-accelerated Android emulator and its own Claude Code agent, so several apps can be
 developed in parallel while you retain pixel-accurate visual control from the Windows desktop.
 
+Companion documents: `packer/README.md` (building the image), `golden-image-contents.md`
+(what the image contains), `runbook.md` (operating a VM).
+
 ---
 
 ## 1. Goals and constraints
@@ -78,7 +81,7 @@ Reserve ~12 GB for Windows itself and headroom. That leaves ~52 GB for guests.
 | Android | cmdline-tools, platform-tools, build-tools, one platform (e.g. API 35), one x86_64 system image (Google APIs), pre-created AVD, `/dev/kvm` access for the `dev` user (`kvm` group) |
 | Agent | Claude Code, Android MCP server (e.g. `mobile-mcp`), shared `~/.claude/` config and global `CLAUDE.md` conventions |
 | Access | `dev` user with your SSH public key, sudo NOPASSWD, RDP password set by cloud-init |
-| Project | Cloned via cloud-init at first boot; `npm install` run; project-specific env in `~/.env` |
+| Project | Cloned after boot over an interactive SSH login to GitHub, then `npm install`; project-specific env in `~/.env` |
 
 ### Emulator configuration
 
@@ -101,7 +104,7 @@ Each VM is its own machine, so ports don't clash — but for tooling clarity kee
 |---|---|
 | SSH | 22 |
 | RDP (xrdp) | 3389 |
-| adb (tcp) | 5555 (published by `adb-bridge.service`) |
+| adb (tcp) | 5555 on the guest's LAN address (published by `adb-bridge.service`) |
 | Emulator console / adb | 5554 / 5555 (guest loopback only) |
 | Metro | 8081 |
 
@@ -114,6 +117,13 @@ listening on an address the host can reach. The tempting fix, `adb tcpip 5555`, 
 work: it moves the guest Android's adbd to TCP mode behind qemu's NAT, still unreachable
 from the host, and additionally knocks the emulator off the guest's own adb server, after
 which a local `adb exec-out screencap` silently produces a zero-byte file.
+
+The bridge must bind the guest's **LAN address specifically**, never `0.0.0.0`. Binding all
+interfaces includes loopback, which means socat's listener answers socat's own forward target
+and `fork` turns that into an unbounded fork bomb - and it simultaneously takes
+`127.0.0.1:5555` away from the emulator, which needs precisely that address. Both were
+observed on a real clone. The address comes from DHCP, so it is resolved at service start;
+the cost is that the bridge needs a restart if the lease ever hands out a different one.
 
 ---
 
@@ -212,7 +222,7 @@ Output: `C:\Hyper-V\golden\golden-ubuntu-rn.vhdx`. Treat it as immutable.
 Usage:
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo git@github.com:you/foo.git -Memory 10GB -Cpus 4
+.\New-DevVM.ps1 -Name app-foo -Repo you/foo -Memory 10GB -Cpus 4
 ```
 
 What it does:
@@ -271,8 +281,10 @@ write_files:
       ADB_SERVER_SOCKET=tcp:${HOST_IP}:5037
       ANDROID_SERIAL=${DEVICE_SERIAL}
 runcmd:
-  - sudo -u dev git clone ${REPO} /home/dev/app
-  - sudo -u dev bash -lc 'cd ~/app && npm install'
+  # The checkout is NOT done here - see §8.3. cloud-init runs before anyone can log into
+  # GitHub, so an unattended clone of a private repo needs a credential on the seed ISO,
+  # which stays attached to the VM and readable from inside it.
+  - sudo -u dev mkdir -p /home/dev/app
   # Emulator only when no phone is assigned to this VM
   - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true'
   - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20 && adb wait-for-device) || true'

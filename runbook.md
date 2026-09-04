@@ -1,6 +1,7 @@
 # Runbook: every command, host and guest
 
 Companion to `linux-vm-on-windows.md`. Each block is tagged with where it runs.
+For what is already installed in a fresh guest, see `golden-image-contents.md`.
 
 | Tag | Where | Shell |
 |---|---|---|
@@ -278,9 +279,10 @@ node --version && java -version && claude --version
 **[H]**
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo https://github.com/me/app-foo.git
+.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo          # prompts for the GitHub login (4.2)
+.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo -SkipGitHubLogin   # unattended, ~/app empty
 # phone-backed instead of emulator:
-.\New-DevVM.ps1 -Name app-bar -Repo <url> -DeviceSerial 1A2B3C4D -HostIp 192.168.1.10
+.\New-DevVM.ps1 -Name app-bar -Repo <repo> -DeviceSerial 1A2B3C4D -HostIp 192.168.1.10
 ```
 
 What it executes:
@@ -307,8 +309,10 @@ Get-VMNetworkAdapter -VMName app-foo | Select-Object -ExpandProperty IPAddresses
 ```bash
 # user: dev (sudo, kvm), your SSH key, RDP password from chpasswd
 # ~/.env: PROJECT, ADB_SERVER_SOCKET, ANDROID_SERIAL   (no credentials)
-sudo -u dev git clone <repo> /home/dev/app
-sudo -u dev bash -lc 'cd ~/app && npm install'
+# No clone here: cloud-init runs before anyone can authenticate, so a private repo would
+# need a credential on the seed ISO - which stays attached and readable in the guest. The
+# checkout is an interactive step after boot (4.2).
+sudo -u dev mkdir -p /home/dev/app
 # emulator path only (no DEVICE_SERIAL):
 sudo -u dev bash -lc '~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &'
 sudo -u dev bash -lc 'sleep 20 && adb wait-for-device'
@@ -317,7 +321,35 @@ sudo -u dev tmux new -d -s agent -c /home/dev/app
 
 Watch it: **[G]** `sudo cloud-init status --wait; sudo tail -f /var/log/cloud-init-output.log`
 
-### 4.2 Log the agent in — **[G]**, once per VM
+### 4.2 GitHub login and checkout — **[H]**, interactive, once per VM
+
+With `-Repo`, `New-DevVM.ps1` asks at the end of the run:
+
+```
+  Log into GitHub in this VM and clone the project now? [Y/n]
+```
+
+Answering yes copies a setup script into the guest and runs it over `ssh -t`, so `gh`'s
+prompts land in your terminal. It installs the GitHub CLI in that VM, runs `gh auth login`
+(skipped if already authenticated), `gh auth setup-git`, clones into `~/app` and runs
+`npm install` when there is a `package.json`.
+
+Nothing GitHub-related is in the golden image, and no credential is written to the seed ISO —
+that ISO stays attached to the VM and is readable from inside it. The token exists only in
+that one guest.
+
+`-SkipGitHubLogin` suppresses the prompt for unattended runs. To do it later, or after
+answering no:
+
+```powershell
+ssh dev@<vm-ip> -t "bash /tmp/github-setup.sh 'you/foo'"   # if the script was already copied
+ssh -A dev@<vm-ip>                                          # or clone by hand over agent forwarding
+```
+
+For a non-GitHub remote, `-Repo` still works: the script falls back to plain `git clone`, and
+seeds `known_hosts` for the remote host first if the URL is SSH-form.
+
+### 4.3 Log the agent in — **[G]**, once per VM
 
 ```bash
 ssh dev@<vm-ip> -t claude      # /login -> "Claude account with subscription"
@@ -437,4 +469,7 @@ ansible -i inventory.ini all -m shell -a 'sudo npm i -g @anthropic-ai/claude-cod
 | No IP after 3 min | `Get-VMNetworkAdapter -VMName app-foo`; switch bound to the right NIC? |
 | VM will not start | `Get-VM app-foo \| fl State,Status`; nested virt needs static memory + no checkpoints |
 | `adb connect` refused | `systemctl status adb-bridge` in the guest, then `Test-NetConnection <vm-ip> -Port 5555`. The emulator binds 5555 to the guest's loopback only; the socat unit is what publishes it on the LAN. Do **not** "fix" this with `adb tcpip 5555` - see below |
+| Guest load average in the hundreds, thousands of `socat` processes | The pre-fix `adb-bridge` bound `0.0.0.0`, which includes loopback - so it forwarded into itself and forked without bound. `sudo systemctl disable --now adb-bridge`, then rebuild the image. Confirm with `pgrep -c socat` (should be 1) and `ss -ltnp \| grep 5555` (should show the LAN address, never `0.0.0.0`) |
+| Emulator never appears at boot, cloud-init stuck at `running` | `tail /tmp/emu.log`. A Qt "no platform plugin could be initialized" fatal means the emulator was started windowed with no X display - `~/bin/emu` must add `-no-window` when `DISPLAY` is unset. Until the `timeout` fix, `adb wait-for-device` then blocked runcmd forever, so the `agent` tmux session never started either |
+| Windowed emulator fails over RDP but headless works | `libxcb-cursor0` missing. Qt 6.5+ needs it for the xcb plugin; the message names the plugin, not the package |
 | `adb exec-out screencap` writes 0 bytes | Something ran `adb tcpip 5555`, which drops the emulator off the guest's own adb server. `adb kill-server && adb start-server` in the guest. Never run `adb tcpip` against the emulator - host access is the adb-bridge unit's job |

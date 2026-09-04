@@ -5,19 +5,27 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-: "${ANDROID_API:=35}"
-: "${ANDROID_BUILD_TOOLS:=35.0.0}"
+# Empty means "resolve the newest" - see the resolver below. The image is meant to ship
+# current tooling, so latest is the default and a pin is the exception.
+: "${ANDROID_API:=}"
+: "${ANDROID_BUILD_TOOLS:=}"
 : "${CMDLINE_TOOLS_URL:=https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip}"
 : "${AVD_NAME:=dev}"
 : "${AVD_DEVICE:=pixel_6}"
 : "${AVD_RAM_MB:=4096}"
 
-SYSTEM_IMAGE="system-images;android-${ANDROID_API};google_apis;x86_64"
 ANDROID_HOME="$HOME/Android/Sdk"
 
 echo "==> emulator runtime dependencies"
 # The emulator is an X client with its own audio/GL stack; without these it fails to start
 # with linker errors that look nothing like the real problem.
+#
+# libxcb-cursor0 is the one that is easy to miss: Qt 6.5+ needs it to load the xcb platform
+# plugin, and the emulator's bundled Qt reports it as
+#   "Could not load the Qt platform plugin xcb ... even though it was found"
+# followed by a fatal "no Qt platform plugin could be initialized". Nothing in that names a
+# missing package. The headless build never hits it - -no-window skips the UI entirely - so
+# it only shows up the first time someone starts a windowed emulator over RDP.
 sudo apt-get install -y \
     qemu-kvm \
     libvirt-daemon-system \
@@ -30,6 +38,7 @@ sudo apt-get install -y \
     libasound2t64 \
     libgl1 \
     libc++1 \
+    libxcb-cursor0 \
     socat \
     android-sdk-platform-tools-common
 
@@ -55,6 +64,51 @@ PROFILE
 sudo chmod 644 /etc/profile.d/android.sh
 # shellcheck disable=SC1091
 source /etc/profile.d/android.sh
+
+echo "==> updating the command line tools to the current release"
+# The zip above is a bootstrap: Google publishes no stable "latest" URL, so the only way to
+# get a sdkmanager at all is a build-numbered file that ages. Now that one exists, let it
+# replace itself with the current release, so the pin costs a download rather than a stale
+# toolchain.
+# Licences have to be accepted before this install too, not just the big one below - see the
+# long comment there for why the answers arrive as a here-string and never through a pipe.
+sdkmanager --licenses >/dev/null <<< "$(printf 'y\n%.0s' $(seq 100))"
+sdkmanager --install "cmdline-tools;latest"
+
+# `sdkmanager --list` prints "package | version | description | location" over several
+# sections. Squeezing out spaces and taking the first column gives bare package ids to match
+# against; anchoring the pattern with $ is what rejects previews and release candidates
+# ("build-tools;36.0.0-rc1", "platforms;android-VanillaIceCream"), which are exactly what you
+# do not want a golden image built against.
+sdk_packages() {
+    sdkmanager --list 2>/dev/null | tr -d ' ' | cut -d'|' -f1
+}
+
+if [ -z "$ANDROID_API" ]; then
+    echo "==> resolving the newest API with a google_apis x86_64 system image"
+    # Deliberately keyed on the SYSTEM IMAGE, not on the platform. Google ships a new
+    # platform before the matching emulator image, so "newest platform" periodically names an
+    # API with nothing bootable - the SDK install succeeds and then avdmanager fails with
+    # "package not available", 20 minutes later. The newest API that can actually boot is the
+    # only one worth building an AVD from.
+    ANDROID_API="$(sdk_packages \
+        | grep -E '^system-images;android-[0-9]+;google_apis;x86_64$' \
+        | cut -d';' -f2 | cut -d- -f2 \
+        | sort -n | tail -n1)"
+    [ -n "$ANDROID_API" ] || { echo "ERROR: no google_apis x86_64 system image found" >&2; exit 1; }
+fi
+
+if [ -z "$ANDROID_BUILD_TOOLS" ]; then
+    echo "==> resolving the newest stable build-tools"
+    ANDROID_BUILD_TOOLS="$(sdk_packages \
+        | grep -E '^build-tools;[0-9]+\.[0-9]+\.[0-9]+$' \
+        | cut -d';' -f2 \
+        | sort -V | tail -n1)"
+    [ -n "$ANDROID_BUILD_TOOLS" ] || { echo "ERROR: no stable build-tools found" >&2; exit 1; }
+fi
+
+SYSTEM_IMAGE="system-images;android-${ANDROID_API};google_apis;x86_64"
+echo "    API ${ANDROID_API}, build-tools ${ANDROID_BUILD_TOOLS}"
 
 echo "==> SDK packages (this is the long one: the system image is ~1.5 GB)"
 # `yes | sdkmanager --licenses` is the incantation every guide prints, and under
@@ -118,6 +172,37 @@ echo "==> adb bridge to the host"
 # socat republishes the loopback port on the LAN interface, which is all that was ever
 # needed. It stays up across emulator restarts: with no emulator running it has nothing to
 # forward to and the host's "adb connect" fails exactly as it would have anyway.
+#
+# It MUST bind the LAN address specifically. `bind=0.0.0.0` looks equivalent and is a disaster
+# in two separate ways, both observed:
+#
+#   1. 0.0.0.0 includes 127.0.0.1, so socat's own listener answers its own forward target.
+#      With `fork`, every connection spawns a child that connects straight back into the
+#      listener, which forks again - an unbounded fork bomb. Measured: 2050 socat processes,
+#      9161 total, load average over 500 on a 4-vCPU guest.
+#   2. It takes 127.0.0.1:5555 away from the emulator, which needs exactly that address to
+#      publish its own adb port. The emulator then fails or flaps, which reads like a broken
+#      snapshot rather than a stolen port.
+#
+# Binding one address fixes both: loopback:5555 stays free for the emulator, and socat has no
+# path back to itself. The address is resolved at start rather than baked in, because it comes
+# from DHCP and the image is cloned into many VMs.
+sudo tee /usr/local/bin/adb-bridge >/dev/null <<'BRIDGE'
+#!/usr/bin/env bash
+# Publish the emulator's loopback adb port on this VM's LAN address. See 30-android-sdk.sh.
+set -euo pipefail
+
+lan_ip="$(ip -4 -o route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
+if [ -z "${lan_ip:-}" ]; then
+    echo "adb-bridge: no LAN IPv4 yet; systemd will retry" >&2
+    exit 1
+fi
+
+echo "adb-bridge: ${lan_ip}:5555 -> 127.0.0.1:5555"
+exec socat "TCP-LISTEN:5555,fork,reuseaddr,bind=${lan_ip}" TCP:127.0.0.1:5555
+BRIDGE
+sudo chmod 755 /usr/local/bin/adb-bridge
+
 sudo tee /etc/systemd/system/adb-bridge.service >/dev/null <<'UNIT'
 [Unit]
 Description=Publish the emulator's loopback adb port on the LAN interface
@@ -125,9 +210,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/socat TCP-LISTEN:5555,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:5555
+ExecStart=/usr/local/bin/adb-bridge
 Restart=always
-RestartSec=2
+RestartSec=5
 User=dev
 
 [Install]
@@ -142,16 +227,37 @@ cat > "$HOME/bin/emu" <<EMU
 #!/usr/bin/env bash
 # Start the project emulator. Pass -snapshot golden for a warm start (~seconds),
 # or -no-snapshot-load to boot cold.
+#
+# The emulator is windowed by default, and there is no X display for anything started from
+# cloud-init, systemd or a plain SSH session - the xrdp X session only exists while someone
+# is connected. Started windowed with no display it dies immediately on
+#   "Fatal: This application failed to start because no Qt platform plugin could be
+#    initialized"
+# and whoever launched it is left waiting on an emulator that will never register: at first
+# boot that was an \`adb wait-for-device\` blocking cloud-init forever, which also meant the
+# tmux session on the next runcmd line never started.
+#
+# So decide from DISPLAY rather than requiring every caller to remember -no-window. Over RDP
+# DISPLAY is set and you get a window; everywhere else it runs headless and adb still works.
+args=()
+if [ -z "\${DISPLAY:-}" ]; then
+    args+=(-no-window)
+fi
+
 exec emulator -avd ${AVD_NAME} \\
     -gpu swiftshader_indirect \\
     -no-boot-anim \\
     -no-audio \\
     -no-snapshot-save \\
-    -port 5554 "\$@"
+    -port 5554 "\${args[@]}" "\$@"
 EMU
 chmod +x "$HOME/bin/emu"
 
 echo "==> versions"
+# Print what was actually resolved: with "latest" as the default, the answer is a property of
+# the build date, and the only record of it is this line in the build log.
+echo "api: ${ANDROID_API}  build-tools: ${ANDROID_BUILD_TOOLS}"
+echo "system image: ${SYSTEM_IMAGE}"
 sdkmanager --version
 "$ANDROID_HOME/platform-tools/adb" --version | head -n1
 

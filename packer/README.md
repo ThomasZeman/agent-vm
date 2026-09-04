@@ -3,13 +3,17 @@
 Builds `golden-ubuntu-rn.vhdx` — the immutable base every project VM clones from as a
 differencing disk. Implements §8.1 of `../linux-vm-on-windows.md`.
 
+For what ends up *inside* the image — every package, service, path and deliberate omission —
+see [`../golden-image-contents.md`](../golden-image-contents.md).
+
 ```
 ubuntu-rn.pkr.hcl              Hyper-V ISO builder + provisioner wiring
 Build-GoldenImage.ps1          Wrapper: build -> move -> compact -> mark read-only
 http/user-data.pkrtpl.hcl      Ubuntu autoinstall (templated with your SSH public key)
 scripts/10-desktop-xrdp.sh     XFCE, xrdp, lossless RDP settings (§6)
-scripts/20-node-java.sh        Node LTS, OpenJDK 17, watchman
-scripts/30-android-sdk.sh      SDK, system image, the "dev" AVD, ~/bin/emu
+scripts/20-node-java.sh        Node LTS, OpenJDK 17, C/C++ toolchain, watchman
+scripts/25-ide-browser.sh      VS Code, xdg-utils, Chromium
+scripts/30-android-sdk.sh      SDK, system image, the "dev" AVD, ~/bin/emu, adb bridge
 scripts/40-emulator-snapshot.sh  Boots the AVD once, saves the "golden" snapshot
 scripts/50-claude.sh           Claude Code, mobile MCP server, global CLAUDE.md
 scripts/90-cleanup.sh          Generalization — the step that makes cloning work
@@ -99,13 +103,30 @@ ISO entirely (no `dev` user, no key, no repo) and fight each other for a single 
 
 ## Toolchain versions
 
-All pinned as Packer variables at the top of `ubuntu-rn.pkr.hcl`: `android_api`,
-`android_build_tools`, `android_cmdline_tools_url`, `node_major`, `watchman_version`,
-`avd_ram_mb`. Override per build:
+**The image tracks latest on purpose.** The Ubuntu point release, the Android API, build-tools,
+`cmdline-tools`, adb, the emulator, VS Code, Chromium and Claude Code all resolve to the
+current version at build time — rebuilding is how the toolchain moves forward, so there is no
+reproducible-build goal and two builds from one commit are not the same image.
+
+Two resolutions have guard rails: the Android API is chosen as the newest that has a
+`google_apis;x86_64` **system image** (the newest *platform* is regularly ahead of the emulator
+images, which yields an AVD that cannot be created), and release candidates are excluded.
+
+Pins are available as overrides when you need one:
 
 ```powershell
-packer build -var android_api=36 -var node_major=24 .
+packer build -var android_api=35 -var android_build_tools=35.0.0 -var node_major=24 .
 ```
+
+The Ubuntu ISO is resolved by the wrapper rather than the template, so pin it there:
+
+```powershell
+.\Build-GoldenImage.ps1 -UbuntuSeries 24.04                      # default: current 24.04.x
+.\Build-GoldenImage.ps1 -IsoUrl <url> -IsoChecksum sha256:<hex>  # an exact ISO
+```
+
+Full detail, and what to save so you know what a given image contains, in
+[`../golden-image-contents.md`](../golden-image-contents.md) §12.
 
 ## Upgrading
 
@@ -121,6 +142,10 @@ Point new VMs at it and retire the old one when its last child is gone;
 
 Small changes — an SDK point release, an updated MCP server, a revised global `CLAUDE.md` —
 go through the Ansible path in §8.4 instead. A rebuild is for the toolchain, not for config.
+
+A rebuild is not a reproduction — it is an upgrade, which is the point. Rebuilding an old
+commit still gives you current everything. Keep the previous VHDX until its last child is
+gone, so there is a known-good image to fall back to if an upstream release breaks something.
 
 ## The installer is asking me questions
 
@@ -202,7 +227,9 @@ packer validate .
 | Install reaches `postinstall` then dies on `retrieving: unzip` / `curtin ... exit status 100` | apt could not reach the archive: autoinstall's `network:` section replaced the live environment's netplan with one that matches no interface, so the network went down mid-install. Hyper-V's NIC comes over VMBus with no PCI slot for a predictable name, so it stays `eth0` — `match: name: "en*"` alone never hits it. The config matches both `en*` and `eth*`; check with `ip -br link` in the installer shell. |
 | Leftover VM is stuck "Shutting Down" and `Stop-VM` fails with `failed to change state` | Hyper-V refuses state changes mid-transition — an ACPI shutdown reached a guest sitting in the installer with nobody to handle it. The script now waits it out and then kills the VM's `vmwp.exe` worker. By hand: `$id = (Get-VM -Name golden-ubuntu-rn).Id.Guid; Get-CimInstance Win32_Process -Filter "Name='vmwp.exe'" \| Where-Object { $_.CommandLine -match $id } \| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }` — each VM has its own worker, so this pulls the plug on that one machine only. |
 | `A virtual machine with the name golden-ubuntu-rn is already defined in Hyper-V` | An earlier build was interrupted and left its VM behind. Re-run `.\Build-GoldenImage.ps1` — it now asks before deleting it. Say no and it aborts without touching the VM; `-Force` skips the prompt, `-VmName other-name` builds beside it. |
-| `packer build` fails on the ISO checksum | The point release moved. Update `iso_url` to the current 24.04.x ISO. |
+| `packer build` fails to download the ISO, or fails on its checksum | You ran `packer build` directly. The template's `iso_url` default names a specific point release and goes stale — `releases.ubuntu.com/24.04/` keeps only the current one, so the ISO and its `SHA256SUMS` line vanish together. Use `.\Build-GoldenImage.ps1`, which resolves both from one fetch and cannot go stale, or pass `-var iso_url=… -var iso_checksum=sha256:…` yourself. |
+| `Could not fetch https://releases.ubuntu.com/<series>/SHA256SUMS` | The wrapper could not reach releases.ubuntu.com, or `-UbuntuSeries` names a series that was never released. Check the series first — a 404 here reads the same as an outage. |
+| `No ubuntu-<series>[.x]-live-server-amd64.iso found in …SHA256SUMS` | The sums list downloaded but contained no live-server image — normal for a series that only ships desktop/WSL builds. Pass an explicit `-IsoUrl` / `-IsoChecksum`. |
 | watchman download 404s | No longer fatal. Upstream publishes the prebuilt linux zip on only some date-stamped tags, so the build now resolves the newest tag that has one and, failing that, warns and carries on — Metro's own crawler replaces it. Pin a specific tag with `-var watchman_version=…` if you need one. |
 | 40-… fails with "KVM is not available" | Nested virtualization is off on the build VM, or disabled in host BIOS (SVM / VT-x). |
 | Two clones get the same IP | `/etc/machine-id` was not truncated — the image was booted again after `90-cleanup.sh`. Rebuild, or add `dhcp-identifier: mac` to the guest's netplan. |
@@ -217,6 +244,17 @@ emulator -accel-check            # KVM usable
 ls -l /dev/kvm                   # exists, group kvm
 ~/bin/emu -snapshot golden       # emulator on screen in seconds, not 90 s
 adb devices                      # emulator-5554  device
+systemctl status adb-bridge      # active; then Test-NetConnection <ip> -Port 5555 from the host
 claude --version
 node --version && java -version
+echo "$JAVA_HOME"                # /usr/lib/jvm/java-17-openjdk-amd64, not empty
+cc --version && cmake --version && ninja --version
+code --version
+```
+
+And one real build, because it is the only check that exercises the C/C++ toolchain:
+
+```bash
+npx --yes @react-native-community/cli@latest init Probe --skip-install
+cd Probe && npm install && (cd android && ./gradlew assembleDebug)
 ```
