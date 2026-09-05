@@ -1,7 +1,8 @@
 # Runbook: every command, host and guest
 
 Companion to `linux-vm-on-windows.md`. Each block is tagged with where it runs.
-For what is already installed in a fresh guest, see `golden-image-contents.md`.
+For what is already installed in a fresh guest, see `golden-image-contents.md`; for every
+parameter of the host scripts, `host-scripts.md`.
 
 | Tag | Where | Shell |
 |---|---|---|
@@ -11,7 +12,8 @@ For what is already installed in a fresh guest, see `golden-image-contents.md`.
 | **[P]** | Physical phone | via adb from the host |
 
 Scripts are named, never pathed: `Build-GoldenImage.ps1` runs from `packer\`,
-`New-DevVM.ps1` and `Remove-DevVM.ps1` from the directory above it.
+`New-DevVM.ps1`, `Remove-DevVM.ps1`, `Get-DevVMPassword.ps1` and `Set-DevVMPassword.ps1`
+from the directory above it.
 After any `winget install`, open a **new** elevated shell — `PATH` is only updated for
 processes started afterwards.
 
@@ -22,8 +24,7 @@ it once and every script follows:
 [Environment]::SetEnvironmentVariable('DEVVM_ROOT', 'E:\Hyper-V', 'Machine')   # new shell after this
 ```
 
-or pass `-Root E:\Hyper-V` to `Build-GoldenImage.ps1`, `New-DevVM.ps1` and
-`Remove-DevVM.ps1` — the same value to all three.
+or pass `-Root E:\Hyper-V` to every script — the same value to all of them.
 
 ---
 
@@ -377,6 +378,20 @@ adb connect <vm-ip>:5555                  # the guest emulator, visible to host 
 adb -s <vm-ip>:5555 exec-out screencap -p > shot.png
 Stop-VM -Name app-foo                     # graceful; VMs are cheap, keep them stopped
 ```
+
+The RDP password is printed once by `New-DevVM.ps1`. It is not secret in any useful sense —
+the VMs are only reachable on the local switch — so it is short, and it can be read back or
+replaced at any time:
+
+```powershell
+.\Get-DevVMPassword.ps1 -Name app-foo                    # from the seed ISO; no elevation needed
+.\Get-DevVMPassword.ps1 -Name app-foo | Set-Clipboard
+.\Set-DevVMPassword.ps1 -Name app-foo                    # generates one, applies it over ssh, prints it
+.\Set-DevVMPassword.ps1 -Name app-foo -Password hunter2
+```
+
+`Set-DevVMPassword.ps1` records the new value in `C:\Hyper-V\vms\app-foo\rdp-password.txt`,
+which `Get-DevVMPassword.ps1` prefers over the now-stale ISO.
 
 **[G]**
 

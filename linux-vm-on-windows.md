@@ -5,7 +5,8 @@ hardware-accelerated Android emulator and its own Claude Code agent, so several 
 developed in parallel while you retain pixel-accurate visual control from the Windows desktop.
 
 Companion documents: `packer/README.md` (building the image), `golden-image-contents.md`
-(what the image contains), `runbook.md` (operating a VM).
+(what the image contains), `runbook.md` (operating a VM), `host-scripts.md` (the host-side
+PowerShell scripts and their parameters).
 
 ---
 

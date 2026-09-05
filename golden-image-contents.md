@@ -413,4 +413,5 @@ Children are differencing disks, so a new VM costs only what it writes.
 
 - `packer/README.md` — building the image, and the two things that most often go wrong
 - `runbook.md` — day-to-day operation of a VM
+- `host-scripts.md` — the host-side scripts that build, clone and remove VMs
 - `linux-vm-on-windows.md` — the design this implements

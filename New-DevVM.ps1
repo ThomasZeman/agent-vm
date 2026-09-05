@@ -120,8 +120,9 @@ function Write-Step { param([string]$Text) Write-Host "==> $Text" -ForegroundCol
 function Write-Note { param([string]$Text) Write-Host "    $Text" -ForegroundColor DarkGray }
 
 function New-RandomPassword {
-    param([int]$Length = 20)
-    # Alphanumeric only: the value is substituted into YAML and typed into mstsc.
+    param([int]$Length = 8)
+    # Alphanumeric only: the value is substituted into YAML and typed into mstsc. Short on
+    # purpose - these VMs are reachable only on the local DevSwitch subnet.
     $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
     $bytes = [byte[]]::new($Length)
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -644,5 +645,6 @@ elseif ($Repo) {
 else {
     Write-Note '~/app is empty - no -Repo was given.'
 }
+Write-Note "Lost the password? .\Get-DevVMPassword.ps1 -Name $Name   (or set one: .\Set-DevVMPassword.ps1)"
 Write-Note 'The emulator is still resuming from the golden snapshot; give it a few seconds.'
 Write-Note "Log the agent in once in this VM: ssh dev@$ip -t claude   (then /login, subscription account)."
