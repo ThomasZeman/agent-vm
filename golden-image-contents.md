@@ -203,6 +203,9 @@ emulator restarts; with nothing running it simply has nothing to forward.
 `50-claude.sh`
 
 - **Claude Code**, `npm install -g @anthropic-ai/claude-code`.
+- **Claude Code extension for VS Code**, `code --install-extension anthropic.claude-code`,
+  installed as `dev` because extensions are per-user (`~/.vscode/extensions/`). It ships its
+  own Claude Code binary and needs the same one-off per-VM login as the CLI.
 - **`mobile` MCP server** registered at user scope: `npx -y @mobilenext/mobile-mcp@latest`.
   Driving the UI through `tap_element` / `list_elements_on_screen` is far more reliable than
   `adb shell input tap x y` against coordinates the agent guessed.
@@ -249,6 +252,7 @@ cloud-init `runcmd`, in a `tmux` session.
 ~/shots/                             screenshots
 ~/.claude/CLAUDE.md                  machine conventions
 ~/.claude.json                       MCP server registration
+~/.vscode/extensions/                Claude Code extension for VS Code
 ~/.xsession                          "xfce4-session"
 ```
 
@@ -326,6 +330,7 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | VS Code | Microsoft `stable` channel | current |
 | Chromium | apt, snap fallback | current |
 | Claude Code | `npm install -g @anthropic-ai/claude-code` | current |
+| Claude Code extension for VS Code | `code --install-extension anthropic.claude-code` | current Marketplace release |
 | `mobile` MCP server | `npx -y @mobilenext/mobile-mcp@latest` | current *at every launch* |
 | watchman | newest GitHub release with a Linux zip | current |
 

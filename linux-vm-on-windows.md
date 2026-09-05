@@ -169,7 +169,7 @@ With these settings, each guest pixel maps to one host pixel and colours are tra
 
 ## 7. Claude Code in each VM
 
-- Installed globally in the golden image, with no credentials in it. Authentication is a one-off interactive `/login` against your Claude subscription in each new VM; the token lands in the guest's `~/.claude/` and survives reboots. (An API key injected per VM by cloud-init is the alternative — fewer manual steps, but a long-lived secret sitting in every guest.)
+- Installed globally in the golden image, with no credentials in it, along with the Claude Code extension for VS Code so the agent is usable from the RDP desktop as well as from a shell. Authentication is a one-off interactive `/login` against your Claude subscription in each new VM; the token lands in the guest's `~/.claude/` and survives reboots. (An API key injected per VM by cloud-init is the alternative — fewer manual steps, but a long-lived secret sitting in every guest.)
 - **Android MCP server** configured in `~/.claude/` so the agent has tools such as `take_screenshot`, `list_elements_on_screen`, `tap_element`, `type_text`, `swipe`. This is far more reliable than raw `adb shell input tap x y`.
 - A global `CLAUDE.md` in the image covers shared conventions: how to start the emulator, how to reload Metro, where to save screenshots, the verification loop (build → reload → screenshot → inspect → act).
 - Each project's repo adds its own `CLAUDE.md` for app-specific context.
@@ -190,7 +190,7 @@ packer/
     20-node-java.sh        # Node LTS, JDK 17, watchman
     30-android-sdk.sh      # cmdline-tools, platform-tools, system image, AVD
     40-emulator-snapshot.sh# boot AVD once, save "golden" snapshot
-    50-claude.sh           # Claude Code, MCP server, global CLAUDE.md
+    50-claude.sh           # Claude Code CLI + VS Code extension, MCP server, global CLAUDE.md
     90-cleanup.sh          # cloud-init clean, remove machine-id, ssh host keys, apt clean
 ```
 

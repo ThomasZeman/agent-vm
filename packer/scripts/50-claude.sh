@@ -16,6 +16,15 @@ echo "==> Claude Code"
 sudo npm install -g @anthropic-ai/claude-code
 claude --version
 
+echo "==> Claude Code extension for VS Code"
+# The extension is per-user (~/.vscode/extensions), so it has to be installed here as dev,
+# not in 25-ide-browser.sh under sudo. The `code` CLI installs from the Marketplace without a
+# display, and the extension ships its own Claude Code binary, so nothing else is needed. The
+# login is still per VM, same as for the CLI: the extension stores nothing in the image.
+code --install-extension anthropic.claude-code --force
+code --list-extensions | grep -qx 'anthropic.claude-code' \
+    || { echo "    anthropic.claude-code is not installed after 'code --install-extension'" >&2; exit 1; }
+
 echo "==> Android MCP server"
 mkdir -p "$HOME/.claude"
 # Driving the UI through MCP tools (tap_element, list_elements_on_screen) is far more

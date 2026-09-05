@@ -15,7 +15,7 @@ scripts/20-node-java.sh        Node LTS, OpenJDK 17, C/C++ toolchain, watchman
 scripts/25-ide-browser.sh      VS Code, xdg-utils, Chromium
 scripts/30-android-sdk.sh      SDK, system image, the "dev" AVD, ~/bin/emu, adb bridge
 scripts/40-emulator-snapshot.sh  Boots the AVD once, saves the "golden" snapshot
-scripts/50-claude.sh           Claude Code, mobile MCP server, global CLAUDE.md
+scripts/50-claude.sh           Claude Code (CLI + VS Code extension), mobile MCP server, global CLAUDE.md
 scripts/90-cleanup.sh          Generalization — the step that makes cloning work
 ```
 
@@ -250,6 +250,7 @@ node --version && java -version
 echo "$JAVA_HOME"                # /usr/lib/jvm/java-17-openjdk-amd64, not empty
 cc --version && cmake --version && ninja --version
 code --version
+code --list-extensions       # anthropic.claude-code
 ```
 
 And one real build, because it is the only check that exercises the C/C++ toolchain:

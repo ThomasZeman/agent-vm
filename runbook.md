@@ -216,6 +216,7 @@ adb emu kill
 
 ```bash
 sudo npm install -g @anthropic-ai/claude-code
+code --install-extension anthropic.claude-code   # per-user, so as dev, not root
 claude mcp add --scope user mobile -- npx -y @mobilenext/mobile-mcp@latest
 mkdir -p ~/shots
 # writes ~/.claude/CLAUDE.md (emulator commands, verification loop, screenshot conventions)
