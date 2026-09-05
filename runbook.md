@@ -282,8 +282,8 @@ node --version && java -version && claude --version
 **[H]**
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo          # prompts for the GitHub login (4.2)
-.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo -SkipGitHubLogin   # unattended, ~/app empty
+.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo          # offers your GitHub + Claude logins (4.2, 4.3), clones
+.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo -SkipGitHubLogin -SkipClaudeLogin   # no prompts, no credentials, ~/app empty
 # phone-backed instead of emulator:
 .\New-DevVM.ps1 -Name app-bar -Repo <repo> -DeviceSerial 1A2B3C4D -HostIp 192.168.1.10
 ```
@@ -312,9 +312,9 @@ Get-VMNetworkAdapter -VMName app-foo | Select-Object -ExpandProperty IPAddresses
 ```bash
 # user: dev (sudo, kvm), your SSH key, RDP password from chpasswd
 # ~/.env: PROJECT, ADB_SERVER_SOCKET, ANDROID_SERIAL   (no credentials)
-# No clone here: cloud-init runs before anyone can authenticate, so a private repo would
-# need a credential on the seed ISO - which stays attached and readable in the guest. The
-# checkout is an interactive step after boot (4.2).
+# No clone and no credentials here: cloud-init runs before anyone can authenticate, so a
+# private repo would need a credential on the seed ISO - which stays attached and readable
+# in the guest. Credentials and the checkout are SSH steps after boot (4.2, 4.3).
 sudo -u dev mkdir -p /home/dev/app
 # emulator path only (no DEVICE_SERIAL):
 sudo -u dev bash -lc '~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &'
@@ -324,35 +324,67 @@ sudo -u dev tmux new -d -s agent -c /home/dev/app
 
 Watch it: **[G]** `sudo cloud-init status --wait; sudo tail -f /var/log/cloud-init-output.log`
 
-### 4.2 GitHub login and checkout — **[H]**, interactive, once per VM
+### 4.2 GitHub login and checkout — **[H]**, once per VM
 
-With `-Repo`, `New-DevVM.ps1` asks at the end of the run:
+Before building the VM, `New-DevVM.ps1` checks whether `gh` on the host is logged in. If it
+is, it prints the account, the token scopes and your global git identity, and asks:
+
+```
+  Copy your GitHub login into this VM? [Y/n]
+```
+
+Yes: once the guest answers SSH and cloud-init has finished, the script copies
+`devvm-setup.sh` to `/tmp` in the guest and pipes the token and identity to it on SSH stdin
+(never as an argument, never onto the seed ISO). In the guest that runs
+`gh auth login --with-token`, `gh auth setup-git` and `git config --global user.*`; then,
+with `-Repo`, it clones into `~/app` and runs `npm install` with no further prompt. The VM
+now shares the token with the host — revoking it at github.com/settings/applications logs
+both out — and in the guest it sits in `~/.config/gh/hosts.yml` in plain text, as any
+headless `gh` login does.
+
+No, or `gh` not logged in on the host: with `-Repo`, the interactive flow is offered at the
+end instead:
 
 ```
   Log into GitHub in this VM and clone the project now? [Y/n]
 ```
 
-Answering yes copies a setup script into the guest and runs it over `ssh -t`, so `gh`'s
-prompts land in your terminal. It installs the GitHub CLI in that VM, runs `gh auth login`
-(skipped if already authenticated), `gh auth setup-git`, clones into `~/app` and runs
-`npm install` when there is a `package.json`.
+That runs the same script over `ssh -t`, so `gh auth login`'s one-time-code prompts land in
+your terminal, and the VM gets a token of its own.
 
-Nothing GitHub-related is in the golden image, and no credential is written to the seed ISO —
-that ISO stays attached to the VM and is readable from inside it. The token exists only in
-that one guest.
+The golden image carries the `gh` binary and nothing else GitHub-related — no token, no git
+identity, no `known_hosts` entry — and no credential is written to the seed ISO, which stays
+attached to the VM and is readable from inside it.
 
-`-SkipGitHubLogin` suppresses the prompt for unattended runs. To do it later, or after
-answering no:
+`-SkipGitHubLogin` skips both offers and the clone. To do it later, or after answering no:
 
 ```powershell
-ssh dev@<vm-ip> -t "bash /tmp/github-setup.sh 'you/foo'"   # if the script was already copied
-ssh -A dev@<vm-ip>                                          # or clone by hand over agent forwarding
+ssh dev@<vm-ip> -t "bash /tmp/devvm-setup.sh clone 'you/foo'"   # the script stays in the guest
+ssh -A dev@<vm-ip>                                              # or clone by hand over agent forwarding
 ```
 
 For a non-GitHub remote, `-Repo` still works: the script falls back to plain `git clone`, and
 seeds `known_hosts` for the remote host first if the URL is SSH-form.
 
-### 4.3 Log the agent in — **[G]**, once per VM
+### 4.3 Log the agent in — **[H]** at creation, or **[G]** by hand, once per VM
+
+`New-DevVM.ps1` also offers to log Claude Code in, using a long-lived token for your Claude
+**subscription** — not an API key, nothing billed per token. The token comes from
+`claude setup-token` on the host (a browser login; paste the printed token back into the
+script), and is cached at `~\.devvm\claude-oauth-token` (`-ClaudeTokenPath`), readable by
+your account only, for every later VM:
+
+```
+  Log Claude Code into this VM with it? [Y/n]
+```
+
+Yes writes it over SSH after boot into the guest's `~/.claude/settings.json` as
+`env.CLAUDE_CODE_OAUTH_TOKEN`. The CLI and the VS Code extension are logged in from their
+first launch. That entry overrides `/login` in the VM: to use another account there, delete
+it from the file first. `-SkipClaudeLogin` skips the offer; delete the cached file to forget
+the token.
+
+Without it, once per VM:
 
 ```bash
 ssh dev@<vm-ip> -t claude      # /login -> "Claude account with subscription"
@@ -360,10 +392,8 @@ ssh dev@<vm-ip> -t claude      # /login -> "Claude account with subscription"
 ```
 
 Token lands in `~/.claude/` and survives reboots — the login is per VM, not per session.
-Copying `~/.claude/.credentials.json` from an existing VM skips the prompt; it is the same
-account either way, so it is a convenience-vs-secret-sprawl call.
 
-Verify: `claude -p "say ok"`
+Verify either way: `claude -p "say ok"`
 
 ---
 

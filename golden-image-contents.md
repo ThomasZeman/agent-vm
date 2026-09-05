@@ -95,11 +95,14 @@ slower on a large tree, identical in behaviour. A failure here warns and continu
   `/usr/share/keyrings/microsoft.gpg` with `signed-by` (not the deprecated `apt-key`).
 - **`xdg-utils`** — what "Open Folder", clicking a link in the terminal, and VS Code's
   "open in browser" all shell out to. Missing, those silently do nothing.
+- **GitHub CLI (`gh`)**, from the GitHub apt repository, keyed through
+  `/etc/apt/keyrings/githubcli-archive-keyring.gpg` with `signed-by`. The binary only: it
+  is logged into nothing, and section 10 covers what stays out.
 - **Chromium**, `apt` first with a `snap install chromium` fallback. Convenience for web
   work rather than a build dependency, so a failure warns and the image is still good.
 
-Bare XFCE ships with neither an editor nor a browser, which is the only reason this script
-exists.
+Bare XFCE ships with neither an editor nor a browser, which is the reason this script
+exists; `gh` rides along because every project VM ends up wanting it.
 
 ## 5. Android SDK and emulator
 
@@ -214,9 +217,11 @@ emulator restarts; with nothing running it simply has nothing to forward.
   processes belong in `tmux`.
 - **`~/shots/`**, created empty, for screenshots.
 
-**No credentials ship in the image**, and none are injected later. Each VM authenticates once,
-interactively, against your Claude subscription, and the token stays in that guest's
-`~/.claude`. The image is shared by every project VM, so it must be login-free.
+**No credentials ship in the image.** It is shared by every project VM, so it must be
+login-free. Each VM is logged in after boot, over SSH: `New-DevVM.ps1` writes a
+`claude setup-token` subscription token into that guest's `~/.claude/settings.json` when
+asked to, or you run a one-off interactive `/login` there. Either way the token stays in
+that one guest's `~/.claude`.
 
 ## 7. System-wide environment
 
@@ -284,12 +289,13 @@ Not present for other reasons: **no project repository**, **no warm npm cache**,
 credentials**, **no Gradle cache** — the first `./gradlew assembleDebug` in a fresh VM
 downloads the wrapper distribution and dependencies.
 
-**No git or GitHub identity of any kind**, deliberately: no `gh` CLI, no GitHub apt repo, no
-`known_hosts` entry for github.com, no deploy key, no token, and no `git config` user. The
-image is shared by every project VM, so anything here would be a credential handed to all of
-them. `New-DevVM.ps1` installs `gh` and runs `gh auth login` inside a single guest, after
-boot, only when asked — and never writes a credential to the seed ISO, which stays attached to
-the VM and readable from inside it.
+**No git or GitHub identity of any kind**, deliberately: no `known_hosts` entry for
+github.com, no deploy key, no token, and no `git config` user. The `gh` binary is installed
+(section 4) but logged into nothing. The image is shared by every project VM, so anything
+more would be a credential handed to all of them. `New-DevVM.ps1` logs `gh` in inside a
+single guest, after boot, only when asked — fed the host's own token over SSH stdin, or
+through an interactive `gh auth login` — and never writes a credential to the seed ISO,
+which stays attached to the VM and readable from inside it.
 
 ## 11. What a VM from this image can do
 
@@ -328,6 +334,7 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | `cmdline-tools` | bootstrapped from a pinned zip, then `sdkmanager --install "cmdline-tools;latest"` | current |
 | `platform-tools` (adb), `emulator` | `sdkmanager --install` with no revision | current |
 | VS Code | Microsoft `stable` channel | current |
+| GitHub CLI | GitHub apt repository, `stable` | current |
 | Chromium | apt, snap fallback | current |
 | Claude Code | `npm install -g @anthropic-ai/claude-code` | current |
 | Claude Code extension for VS Code | `code --install-extension anthropic.claude-code` | current Marketplace release |

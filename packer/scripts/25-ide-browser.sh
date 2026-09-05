@@ -31,6 +31,20 @@ apt_get install -y code
 # "open in browser" all shell out to. Missing, those silently do nothing.
 apt_get install -y xdg-utils
 
+echo "==> GitHub CLI (GitHub apt repository)"
+# Only the binary. No token, no git identity and no known_hosts entry go into the image;
+# New-DevVM.ps1 logs gh in per VM, after boot, and only when asked. Keyring and list follow
+# the layout GitHub documents, which is also what New-DevVM.ps1's ensure_gh fallback writes
+# on an image that predates this step.
+sudo mkdir -p -m 755 /etc/apt/keyrings
+wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+apt_get update
+apt_get install -y gh
+
 echo "==> Chromium"
 # On 24.04 the chromium-browser deb is a shim that pulls the snap, so this needs snapd to
 # be working. Chromium is a convenience for web work, not a build dependency, so a failure
@@ -41,6 +55,7 @@ fi
 
 echo "==> versions"
 code --version | head -n1
+gh --version | head -n1
 (chromium --version || chromium-browser --version || echo "chromium: not installed") 2>/dev/null | head -n1
 
 echo "==> 25-ide-browser.sh done"

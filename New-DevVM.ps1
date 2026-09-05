@@ -12,15 +12,19 @@
          oscdimg and attaches it as a DVD drive.
       4. Starts the VM, waits for a DHCP address, writes a tuned .rdp file and prints the
          connection lines.
-      5. With -Repo, offers to log into GitHub inside the guest over an interactive SSH
-         session and clone the project.
+      5. Offers to hand this host's logins to the guest over SSH once it is up: the GitHub
+         token `gh` holds here plus your global git identity, and a long-lived Claude
+         subscription token from `claude setup-token`. Each is a separate yes/no, asked
+         before the VM is built so the wait is uninterrupted, and each has a -Skip switch.
+      6. With -Repo, clones the project into /home/dev/app. Unattended if the GitHub token
+         was handed over, otherwise through an interactive `gh auth login` in the guest.
 
-    Step 5 is deliberately NOT part of first boot. cloud-init runs before anyone can type a
-    password, so an unattended clone of a private repo would need a credential shipped in the
-    image or written onto the seed ISO - and that ISO stays attached to the VM for its whole
-    life and is readable from inside the guest. Doing it interactively afterwards means the
-    only thing that ever touches the guest is a token you authorised yourself, and the golden
-    image stays free of any GitHub or git identity at all.
+    Steps 5 and 6 are deliberately NOT part of first boot. cloud-init runs before anyone can
+    type a password, so anything it needed would have to ship in the image or on the seed
+    ISO - and that ISO stays attached to the VM for its whole life and is readable from
+    inside the guest. Delivering credentials over SSH afterwards means they exist in exactly
+    two places, this host and that one guest, and the golden image stays free of any GitHub,
+    git or Claude identity at all.
 
     Run from an elevated PowerShell session; the Hyper-V cmdlets require Administrator.
 
@@ -29,14 +33,24 @@
     .rdp file name.
 
 .PARAMETER Repo
-    Project to check out into /home/dev/app, AFTER boot, over an interactive SSH session that
-    asks first (see -SkipGitHubLogin). Accepts anything `gh repo clone` takes - "owner/repo"
-    or a GitHub URL - and falls back to plain `git clone` for a non-GitHub URL.
-    Omit to create a VM with an empty ~/app.
+    Project to check out into /home/dev/app, AFTER boot, over SSH. Accepts anything
+    `gh repo clone` takes - "owner/repo" or a GitHub URL - and falls back to plain
+    `git clone` for a non-GitHub URL. Omit to create a VM with an empty ~/app.
 
 .PARAMETER SkipGitHubLogin
-    Do not offer the GitHub login and clone. Creates the VM and stops at the connection lines,
-    leaving ~/app empty. For unattended runs, and for repos you would rather clone by hand.
+    Leave GitHub alone entirely: do not offer to copy this host's gh token into the VM, do not
+    offer the interactive login, and do not clone. ~/app stays empty. For unattended runs, and
+    for repos you would rather clone by hand.
+
+.PARAMETER SkipClaudeLogin
+    Do not offer to log Claude Code into the VM. The agent then needs a one-off /login in that
+    guest, as before.
+
+.PARAMETER ClaudeTokenPath
+    Where the long-lived Claude token is cached on this host. Defaults to
+    ~\.devvm\claude-oauth-token. Created on first use from `claude setup-token` (a browser
+    login against your Claude subscription - no API key, no per-token billing), restricted to
+    your account with icacls, and reused for every VM after that. Delete the file to forget it.
 
 .PARAMETER Memory
     Fixed RAM for the guest. Defaults to 10GB, or 6GB when -DeviceSerial is given (no emulator).
@@ -59,13 +73,14 @@
 
 .EXAMPLE
     .\New-DevVM.ps1 -Name app-foo -Repo you/foo
+    Asks whether to copy the GitHub and Claude logins, builds the VM, clones the project.
 
 .EXAMPLE
     .\New-DevVM.ps1 -Name app-game -Repo you/game -DeviceSerial 3A9X0T2K -HostIp 192.168.1.10
 
 .EXAMPLE
-    .\New-DevVM.ps1 -Name app-scratch
-    Empty ~/app, no GitHub prompt.
+    .\New-DevVM.ps1 -Name app-scratch -SkipGitHubLogin -SkipClaudeLogin
+    Empty ~/app, no credentials, no prompts.
 #>
 
 [CmdletBinding()]
@@ -80,6 +95,10 @@ param(
     [string]$Repo,
 
     [switch]$SkipGitHubLogin,
+
+    [switch]$SkipClaudeLogin,
+
+    [string]$ClaudeTokenPath = "$HOME\.devvm\claude-oauth-token",
 
     [int64]$Memory,
 
@@ -113,6 +132,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# What PowerShell uses when it pipes a string into a native command's stdin - here, the
+# credential lines into `ssh` (Invoke-GuestCredentialHandoff). Windows PowerShell defaults
+# to ASCII, which turns an accented git name into '?'. Script scope on purpose: an
+# assignment inside a function is NOT honoured for the pipe (measured on 5.1), and nothing
+# else in this script pipes to a native command.
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 # ---------------------------------------------------------------- helpers ---
 
@@ -206,69 +232,189 @@ function Clear-StaleHostKey {
     }
 }
 
-function Invoke-GuestGitHubSetup {
+# ------------------------------------------------- host-side credentials ---
+
+function Get-HostGitHubLogin {
     <#
-        Logs into GitHub inside the guest and clones the project, interactively. Returns
-        $true only if the whole thing succeeded, so the caller can tell the operator what
-        ~/app actually contains rather than guessing.
+        What `gh` on this host is logged in as, or $null. The token comes out of the Windows
+        keyring via `gh auth token`; the account name and scopes are parsed from
+        `gh auth status`, which is display-only - "unknown" there is cosmetic.
+
+        `cmd /c ... 2>&1` rather than PowerShell's own 2>&1: in Windows PowerShell 5.1 a
+        native command's stderr redirected in-process becomes ErrorRecords, and with
+        $ErrorActionPreference = 'Stop' that is a terminating error. gh writes to stderr
+        when it is not logged in, which is precisely the case this has to survive.
     #>
-    param(
-        [Parameter(Mandatory)][string]$IpAddress,
-        [Parameter(Mandatory)][string]$Repo,
-        [Parameter(Mandatory)][string]$SetupScript
-    )
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return $null }
+
+    $token = @(& cmd /c 'gh auth token --hostname github.com 2>nul')
+    if ($LASTEXITCODE -ne 0 -or $token.Count -eq 0 -or -not $token[0]) { return $null }
+
+    $status = (@(& cmd /c 'gh auth status --hostname github.com 2>&1') -join "`n")
+    $login  = if ($status -match 'Logged in to github\.com (?:account|as) (\S+)') { $Matches[1] } else { 'unknown account' }
+    $scopes = if ($status -match 'Token scopes: (.+)') { ($Matches[1] -replace "'", '').Trim() } else { 'unknown' }
+
+    return @{ Token = ([string]$token[0]).Trim(); Login = $login; Scopes = $scopes }
+}
+
+function Get-HostGitIdentity {
+    # Either field may be empty; git exits 1 for an unset key and prints nothing.
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return @{ Name = ''; Email = '' } }
+    $name  = [string](& git config --global user.name)
+    $email = [string](& git config --global user.email)
+    return @{ Name = $name.Trim(); Email = $email.Trim() }
+}
+
+function Save-HostClaudeToken {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Token)
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
+    [IO.File]::WriteAllText($Path, $Token + "`n", (New-Object System.Text.ASCIIEncoding))
+
+    # Strip inherited ACLs and leave only this account. Elevated or not, GetCurrent() is
+    # still the logged-in user, so the file stays readable from a normal shell too.
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls $Path /inheritance:r /grant:r "${me}:F" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Could not restrict permissions on $Path (icacls exit $LASTEXITCODE); check them by hand."
+    }
+    Write-Note "saved to $Path, readable by $me only"
+}
+
+function Get-HostClaudeToken {
+    <#
+        Returns @{ Token; Created } or $null. Created is $true when the token was minted
+        just now, so the caller does not ask "use it?" straight after "create it?".
+
+        `claude setup-token` is a full-screen interactive flow (browser login, then a code
+        to paste), so it runs uncaptured in this window and the operator pastes the result.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (Test-Path -LiteralPath $Path) {
+        $token = (Get-Content -LiteralPath $Path -Raw).Trim()
+        if ($token -match '^sk-ant-[A-Za-z0-9_-]+$') { return @{ Token = $token; Created = $false } }
+        Write-Warning "$Path does not look like a Claude token (expected sk-ant-...); ignoring it."
+    }
+
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        Write-Note "no cached token at $Path and no `claude` on PATH; the VM will need /login by hand."
+        return $null
+    }
+
+    Write-Note "No cached token at $Path."
+    Write-Note '`claude setup-token` mints a long-lived token for your Claude *subscription* - not an API'
+    Write-Note 'key, nothing billed per token. It opens a browser login on this host and prints the token;'
+    Write-Note "paste it back here. It is then cached at $Path for every later VM."
+    if (-not (Read-YesNo -Question '  Run `claude setup-token` now?')) { return $null }
+
+    Write-Host ''
+    & claude setup-token
+    Write-Host ''
+
+    $secure = Read-Host '  Paste the token it printed (sk-ant-oat01-...)' -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr).Trim() }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+
+    if ($token -notmatch '^sk-ant-[A-Za-z0-9_-]+$') {
+        Write-Warning 'That does not look like a Claude token; skipping the Claude login for this VM.'
+        return $null
+    }
+    Save-HostClaudeToken -Path $Path -Token $token
+    return @{ Token = $token; Created = $true }
+}
+
+# ---------------------------------------------------------- guest steps ---
+
+$script:SshOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
+
+function Initialize-GuestSetup {
+    <#
+        Everything the post-boot steps share: the OpenSSH client, sshd answering, a clean
+        known_hosts entry, cloud-init finished, and the setup script in /tmp. Returns $true
+        when the guest is ready for `bash /tmp/devvm-setup.sh ...`.
+    #>
+    param([Parameter(Mandatory)][string]$IpAddress, [Parameter(Mandatory)][string]$SetupScript)
 
     foreach ($tool in 'ssh', 'scp') {
         if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-            Write-Warning "$tool is not on PATH; skipping the checkout. Add the Windows OpenSSH client (Settings > Optional features) and clone by hand."
+            Write-Warning "$tool is not on PATH; skipping the post-boot setup. Add the Windows OpenSSH client (Settings > Optional features)."
             return $false
         }
     }
 
     Write-Step "Waiting for SSH on $IpAddress"
     if (-not (Wait-ForSsh -IpAddress $IpAddress)) {
-        Write-Warning "No SSH on $IpAddress after 240 s; skipping the checkout."
+        Write-Warning "No SSH on $IpAddress after 240 s; skipping the post-boot setup."
         return $false
     }
 
     Clear-StaleHostKey -IpAddress $IpAddress
-
-    $target  = "dev@$IpAddress"
-    $sshOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
+    $target = "dev@$IpAddress"
 
     # sshd answers before cloud-init has finished, and runcmd is what creates ~/app. Waiting
     # here keeps the clone from racing it. `exit 0` because a non-zero cloud-init status
-    # (deprecation warnings alone will do it) is not a reason to abandon the checkout.
+    # (deprecation warnings alone will do it) is not a reason to abandon the setup.
     Write-Step 'Waiting for first boot to finish'
-    & ssh @sshOpts $target 'cloud-init status --wait >/dev/null 2>&1; exit 0'
+    & ssh @script:SshOpts $target 'cloud-init status --wait >/dev/null 2>&1; exit 0'
 
-    $localScript = Join-Path ([IO.Path]::GetTempPath()) ('devvm-github-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.sh')
+    # Shipped by scp rather than piped into `bash -s`: PowerShell would terminate the piped
+    # string with CRLF and bash treats the stray \r as part of the last command.
+    $localScript = Join-Path ([IO.Path]::GetTempPath()) ('devvm-setup-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.sh')
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($localScript, ($SetupScript -replace "`r`n", "`n"), $utf8NoBom)
-
     try {
-        & scp @sshOpts $localScript "${target}:/tmp/github-setup.sh"
+        & scp @script:SshOpts $localScript "${target}:/tmp/devvm-setup.sh"
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Could not copy the setup script to the guest (scp exit $LASTEXITCODE); skipping the checkout."
+            Write-Warning "Could not copy the setup script to the guest (scp exit $LASTEXITCODE); skipping the post-boot setup."
             return $false
         }
-
-        Write-Host ''
-        Write-Step "GitHub login and clone in $IpAddress"
-        Write-Note 'gh prints a one-time code and opens a browser flow; answer its prompts here.'
-        Write-Host ''
-
-        # -t forces a TTY: without it gh sees a non-interactive stdin and refuses to prompt.
-        & ssh @sshOpts -t $target "bash /tmp/github-setup.sh '$Repo'"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "The guest setup script exited $LASTEXITCODE - see the output above. ~/app may be empty or partially set up."
-            return $false
-        }
-        return $true
     }
     finally {
         Remove-Item -LiteralPath $localScript -Force -ErrorAction SilentlyContinue
     }
+    return $true
+}
+
+function Invoke-GuestCredentialHandoff {
+    <#
+        Feeds KEY=value lines to the guest script on stdin. stdin, not arguments: an
+        argument shows up in `ps` inside the guest and in sshd's logging; a pipe is seen by
+        bash and nothing else. The guest strips the \r PowerShell puts on each line.
+    #>
+    param([Parameter(Mandatory)][string]$IpAddress, [Parameter(Mandatory)][System.Collections.IDictionary]$Payload)
+
+    $lines = foreach ($key in $Payload.Keys) { '{0}={1}' -f $key, $Payload[$key] }
+    $text  = ($lines -join "`n") + "`n"
+
+    # Encoding is $OutputEncoding, set at the top of the script. Windows PowerShell also
+    # puts a UTF-8 BOM in front of the first line and CRLF after the last, whatever the
+    # encoding says; the guest strips both.
+    $text | & ssh @script:SshOpts "dev@$IpAddress" 'bash /tmp/devvm-setup.sh credentials'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "The credential hand-off exited $LASTEXITCODE - see the output above. The VM may need its logins done by hand."
+        return $false
+    }
+    return $true
+}
+
+function Invoke-GuestClone {
+    <#
+        Clones into ~/app. Interactive only if gh still has to log in; with the token
+        already handed over it just runs. Returns $true only if the whole thing succeeded,
+        so the caller can tell the operator what ~/app actually contains rather than guessing.
+    #>
+    param([Parameter(Mandatory)][string]$IpAddress, [Parameter(Mandatory)][string]$Repo)
+
+    # -t forces a TTY: without it gh sees a non-interactive stdin and refuses to prompt,
+    # and npm's progress output is nicer with one either way.
+    & ssh @script:SshOpts -t "dev@$IpAddress" "bash /tmp/devvm-setup.sh clone '$Repo'"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "The guest clone step exited $LASTEXITCODE - see the output above. ~/app may be empty or partially set up."
+        return $false
+    }
+    return $true
 }
 
 function Wait-ForGuestIPv4 {
@@ -346,6 +492,75 @@ if ($DeviceSerial) {
     Write-Note 'render target: AVD emulator, resumed from the golden snapshot'
 }
 
+# ------------------------------------------------------ host credentials ---
+#
+# Asked now, before the two-minute build, so the wait is uninterrupted; delivered over SSH
+# after first boot (Invoke-GuestCredentialHandoff). Nothing here goes near the seed ISO.
+
+$handoff       = [ordered]@{}
+$handoffGitHub = $false
+$handoffClaude = $false
+$ghLogin       = $null
+$gitIdentity   = @{ Name = ''; Email = '' }
+
+if (-not $SkipGitHubLogin) {
+    Write-Host ''
+    Write-Step 'GitHub'
+    $ghLogin     = Get-HostGitHubLogin
+    $gitIdentity = Get-HostGitIdentity
+    if ($ghLogin) {
+        Write-Note "this host: gh is logged in as $($ghLogin.Login)  (token scopes: $($ghLogin.Scopes))"
+        if ($gitIdentity.Name -or $gitIdentity.Email) {
+            Write-Note ("           git commits as {0} <{1}>" -f $gitIdentity.Name, $gitIdentity.Email)
+        } else {
+            Write-Note '           no global git user.name / user.email set here'
+        }
+        Write-Note 'Yes: after boot, this token goes into the VM (gh auth login --with-token, gh auth setup-git)'
+        Write-Note '     along with the git identity. The VM then SHARES the token with this host: revoking it'
+        Write-Note '     at github.com/settings/applications logs both out. Inside the guest it sits in'
+        Write-Note '     ~/.config/gh/hosts.yml in plain text, like any headless gh login.'
+        Write-Note 'No:  with -Repo, an interactive gh auth login in the guest is offered at the end instead,'
+        Write-Note '     which gives that VM a token of its own.'
+        if (Read-YesNo -Question '  Copy your GitHub login into this VM?') {
+            $handoff['GH_TOKEN'] = $ghLogin.Token
+            if ($gitIdentity.Name)  { $handoff['GIT_USER_NAME']  = $gitIdentity.Name }
+            if ($gitIdentity.Email) { $handoff['GIT_USER_EMAIL'] = $gitIdentity.Email }
+            $handoffGitHub = $true
+        } else {
+            Write-Note 'Not copied.'
+        }
+    } else {
+        Write-Note 'gh is not installed or not logged in on this host - nothing to copy.'
+        if ($Repo) { Write-Note 'The GitHub login will be interactive, in the guest, at the end.' }
+    }
+}
+
+if (-not $SkipClaudeLogin) {
+    Write-Host ''
+    Write-Step 'Claude Code'
+    $claude = Get-HostClaudeToken -Path $ClaudeTokenPath
+    if ($claude) {
+        if ($claude.Created) {
+            $useClaude = $true
+        } else {
+            Write-Note "cached subscription token: $ClaudeTokenPath"
+            Write-Note 'Yes: after boot it is written to ~/.claude/settings.json in the VM as CLAUDE_CODE_OAUTH_TOKEN.'
+            Write-Note '     The CLI and the VS Code extension are logged in from their first launch; usage is'
+            Write-Note '     billed to your subscription, exactly as /login would be. It overrides /login in that'
+            Write-Note '     VM - delete the env entry from that file to switch accounts there.'
+            Write-Note 'No:  log the agent in by hand later (ssh in, run claude, /login).'
+            $useClaude = Read-YesNo -Question '  Log Claude Code into this VM with it?'
+        }
+        if ($useClaude) {
+            $handoff['CLAUDE_CODE_OAUTH_TOKEN'] = $claude.Token
+            $handoffClaude = $true
+        } else {
+            Write-Note 'Not copied.'
+        }
+    }
+}
+Write-Host ''
+
 # ----------------------------------------------------- disk, VM, hardware ---
 
 New-Item -ItemType Directory -Path $vmPath -Force | Out-Null
@@ -388,8 +603,9 @@ write_files:
     owner: dev:dev
     permissions: '0600'
     content: |
-      # No Anthropic credentials here: Claude Code authenticates once per VM against your
-      # subscription (run `claude` and log in), and stores its own token under ~/.claude.
+      # No credentials here - this file comes off the seed ISO, which stays attached to the
+      # VM. Claude Code's subscription token, if New-DevVM.ps1 handed one over after boot,
+      # is in ~/.claude/settings.json; otherwise run `claude` and /login once.
       PROJECT=${NAME}
       # Physical device mode (section 12). An empty ANDROID_SERIAL means the emulator.
       ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET}
@@ -431,22 +647,30 @@ instance-id: ${NAME}-${INSTANCE}
 local-hostname: ${NAME}
 '@
 
-# Runs ONCE in the guest, over `ssh -t`, so gh's login prompts reach the operator's terminal.
-# Shipped by scp rather than piped into `bash -s`: PowerShell would terminate the piped string
-# with CRLF and bash treats the stray \r as part of the last command.
+# Copied to /tmp/devvm-setup.sh in the guest once it is up, and left there so a declined or
+# failed step can be re-run by hand. Two entry points:
 #
-# Nothing here is in the golden image on purpose. gh, the GitHub apt repo, the known_hosts
-# entry and the token are all installed per VM, at the moment someone asks for them.
-$guestGitHubScript = @'
+#   credentials   KEY=value lines on stdin; no TTY. Logs gh in with the host's token, sets
+#                 the git identity, writes the Claude token into ~/.claude/settings.json.
+#   clone <repo>  Over `ssh -t`. Logs in interactively if the token was not handed over,
+#                 clones into ~/app, npm install.
+#
+# The gh binary comes from the golden image (25-ide-browser.sh); ensure_gh below only
+# installs it on an image built before that step existed. Everything else - the known_hosts
+# entry and every token - is installed per VM, at the moment someone asks for it.
+$guestSetupScript = @'
 #!/usr/bin/env bash
-# Written by New-DevVM.ps1. Interactive: expects a TTY.
+# Written by New-DevVM.ps1.
+#   bash /tmp/devvm-setup.sh credentials   < KEY=value lines   (GH_TOKEN, GIT_USER_NAME,
+#                                             GIT_USER_EMAIL, CLAUDE_CODE_OAUTH_TOKEN)
+#   bash /tmp/devvm-setup.sh clone <repo>   interactive if gh is not logged in yet
 set -euo pipefail
 
-REPO="${1:?usage: github-setup.sh <repo>}"
 APP=/home/dev/app
 
-if ! command -v gh >/dev/null 2>&1; then
-    echo "==> installing the GitHub CLI"
+ensure_gh() {
+    if command -v gh >/dev/null 2>&1; then return; fi
+    echo "==> installing the GitHub CLI (not in this golden image; images built after 25-ide-browser.sh added it have it already)"
     sudo mkdir -p -m 755 /etc/apt/keyrings
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
@@ -455,57 +679,118 @@ if ! command -v gh >/dev/null 2>&1; then
         | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
     sudo apt-get update -qq
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh
-fi
-gh --version | head -n1
+}
 
-if gh auth status >/dev/null 2>&1; then
-    echo "==> already authenticated to GitHub"
-else
-    echo "==> gh auth login  (answer the prompts below)"
-    gh auth login
-fi
+do_credentials() {
+    local gh_token='' git_name='' git_email='' claude_token='' line key value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#$'\xEF\xBB\xBF'}"  # Windows PowerShell puts a UTF-8 BOM before the first line
+        line="${line%$'\r'}"            # ... and CRLF after the last
+        [ -z "$line" ] && continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        case "$key" in
+            GH_TOKEN)                gh_token="$value" ;;
+            GIT_USER_NAME)           git_name="$value" ;;
+            GIT_USER_EMAIL)          git_email="$value" ;;
+            CLAUDE_CODE_OAUTH_TOKEN) claude_token="$value" ;;
+            *) echo "credentials: unexpected key '${key}' on stdin" >&2; exit 2 ;;
+        esac
+    done
 
-# Point git itself at the token, so later pushes from inside the VM do not prompt.
-gh auth setup-git
-
-# An SSH-form URL needs the host key up front: this runs with a TTY but nobody wants to answer
-# "authenticity of host can't be established" mid-clone, and a non-GitHub host would otherwise
-# fail outright. Per VM, only for the host actually being cloned from.
-case "$REPO" in
-    git@*|ssh://*)
-        host="$(printf '%s' "$REPO" | sed -E 's|^ssh://||; s|^[^@]*@||; s|[:/].*$||')"
-        mkdir -p ~/.ssh && chmod 700 ~/.ssh
-        touch ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
-        if ! ssh-keygen -F "$host" >/dev/null 2>&1; then
-            echo "==> adding ${host} to known_hosts"
-            ssh-keyscan -H "$host" >> ~/.ssh/known_hosts 2>/dev/null
-        fi
-        ;;
-esac
-
-if [ -e "${APP}/.git" ]; then
-    echo "==> ${APP} is already a git repo; leaving it alone"
-else
-    echo "==> cloning ${REPO}"
-    # runcmd created ~/app empty. git refuses to clone into a non-empty directory but is
-    # perfectly happy with an empty one, so there is nothing to clean up first.
-    if printf '%s' "$REPO" | grep -qE '(^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$)|github\.com'; then
-        gh repo clone "$REPO" "$APP"
-    else
-        echo "    not a GitHub repo - using plain git"
-        git clone "$REPO" "$APP"
+    if [ -n "$gh_token" ]; then
+        ensure_gh
+        gh --version | head -n1
+        echo "==> gh auth login --with-token"
+        # Via a pipe, never an argument: an argument would be visible in `ps`.
+        printf '%s' "$gh_token" | gh auth login --hostname github.com --with-token
+        # Point git itself at the token, so pushes from inside the VM do not prompt.
+        gh auth setup-git
+        echo "    logged in as $(gh api user --jq .login 2>/dev/null || echo '<could not query>')"
     fi
-fi
 
-if [ -f "${APP}/package.json" ]; then
-    echo "==> npm install"
-    cd "$APP"
-    npm install
-else
-    echo "==> no package.json; skipping npm install"
-fi
+    if [ -n "$git_name" ];  then git config --global user.name  "$git_name";  fi
+    if [ -n "$git_email" ]; then git config --global user.email "$git_email"; fi
+    if [ -n "${git_name}${git_email}" ]; then
+        echo "==> git identity: ${git_name} <${git_email}>"
+    fi
 
-echo "==> checkout ready in ${APP}"
+    if [ -n "$claude_token" ]; then
+        # The `env` block of the user settings file is applied to every Claude Code session,
+        # CLI and VS Code extension alike, before authentication is resolved - so this is
+        # the one place that covers both. It also wins over any later /login in this VM.
+        echo "==> Claude Code: CLAUDE_CODE_OAUTH_TOKEN -> ~/.claude/settings.json"
+        mkdir -p ~/.claude && chmod 700 ~/.claude
+        local settings=~/.claude/settings.json tmp
+        [ -f "$settings" ] || echo '{}' > "$settings"
+        tmp="$(mktemp)"
+        jq --arg t "$claude_token" '.env.CLAUDE_CODE_OAUTH_TOKEN = $t' "$settings" > "$tmp"
+        mv "$tmp" "$settings"
+        chmod 600 "$settings"
+        # No API call: reports how the CLI will authenticate, not whether the server agrees.
+        claude auth status --text 2>/dev/null | sed 's/^/    /' || true
+    fi
+}
+
+do_clone() {
+    local repo="$1" host
+
+    ensure_gh
+    gh --version | head -n1
+
+    if gh auth status >/dev/null 2>&1; then
+        echo "==> already authenticated to GitHub"
+    else
+        echo "==> gh auth login  (answer the prompts below)"
+        gh auth login
+    fi
+    gh auth setup-git
+
+    # An SSH-form URL needs the host key up front: this runs with a TTY but nobody wants to
+    # answer "authenticity of host can't be established" mid-clone, and a non-GitHub host
+    # would otherwise fail outright. Per VM, only for the host actually being cloned from.
+    case "$repo" in
+        git@*|ssh://*)
+            host="$(printf '%s' "$repo" | sed -E 's|^ssh://||; s|^[^@]*@||; s|[:/].*$||')"
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            touch ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
+            if ! ssh-keygen -F "$host" >/dev/null 2>&1; then
+                echo "==> adding ${host} to known_hosts"
+                ssh-keyscan -H "$host" >> ~/.ssh/known_hosts 2>/dev/null
+            fi
+            ;;
+    esac
+
+    if [ -e "${APP}/.git" ]; then
+        echo "==> ${APP} is already a git repo; leaving it alone"
+    else
+        echo "==> cloning ${repo}"
+        # runcmd created ~/app empty. git refuses to clone into a non-empty directory but is
+        # perfectly happy with an empty one, so there is nothing to clean up first.
+        if printf '%s' "$repo" | grep -qE '(^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$)|github\.com'; then
+            gh repo clone "$repo" "$APP"
+        else
+            echo "    not a GitHub repo - using plain git"
+            git clone "$repo" "$APP"
+        fi
+    fi
+
+    if [ -f "${APP}/package.json" ]; then
+        echo "==> npm install"
+        cd "$APP"
+        npm install
+    else
+        echo "==> no package.json; skipping npm install"
+    fi
+
+    echo "==> checkout ready in ${APP}"
+}
+
+case "${1:-}" in
+    credentials) do_credentials ;;
+    clone)       do_clone "${2:?usage: devvm-setup.sh clone <repo>}" ;;
+    *) echo "usage: devvm-setup.sh credentials < KEY=value lines | clone <repo>" >&2; exit 2 ;;
+esac
 '@
 
 # A phone-backed guest points its adb client at the host's server; an emulator guest keeps
@@ -617,34 +902,77 @@ if ($DeviceSerial) {
 Write-Host "  Metro       : http://${ip}:8081"
 Write-Host ''
 
-# ------------------------------------------------- GitHub login and clone ---
+# ------------------------------------------ credentials and checkout ---
 
-$repoReady = $false
-if ($Repo -and -not $SkipGitHubLogin) {
-    Write-Host "  Project     : $Repo" -ForegroundColor Cyan
-    Write-Note 'Logging in installs the GitHub CLI in this VM and stores a token in it.'
-    Write-Note 'Nothing is written to the golden image, and no credential goes on the seed ISO.'
+$guestReady = $false
+$handoffOk  = $false
+$repoReady  = $false
+$wantClone  = [bool]($Repo -and -not $SkipGitHubLogin)
+
+if ($handoff.Count -gt 0 -or $wantClone) {
+    $guestReady = Initialize-GuestSetup -IpAddress $ip -SetupScript $guestSetupScript
+}
+
+if ($handoff.Count -gt 0 -and $guestReady) {
+    Write-Step "Handing over credentials to $ip"
+    $handoffOk = Invoke-GuestCredentialHandoff -IpAddress $ip -Payload $handoff
+}
+
+if ($wantClone -and $guestReady) {
     Write-Host ''
-    if (Read-YesNo -Question '  Log into GitHub in this VM and clone the project now?') {
-        $repoReady = Invoke-GuestGitHubSetup -IpAddress $ip -Repo $Repo -SetupScript $guestGitHubScript
+    if ($handoffGitHub -and $handoffOk) {
+        Write-Step "Cloning $Repo into ~/app"
+        $repoReady = Invoke-GuestClone -IpAddress $ip -Repo $Repo
     }
     else {
-        Write-Note 'Skipped. ~/app is empty.'
+        Write-Host "  Project     : $Repo" -ForegroundColor Cyan
+        Write-Note 'Logging in installs the GitHub CLI in this VM and gives it a token of its own.'
+        Write-Note 'Nothing is written to the golden image, and no credential goes on the seed ISO.'
+        Write-Note 'gh prints a one-time code and opens a browser flow; answer its prompts here.'
+        Write-Host ''
+        if (Read-YesNo -Question '  Log into GitHub in this VM and clone the project now?') {
+            $repoReady = Invoke-GuestClone -IpAddress $ip -Repo $Repo
+        }
+        else {
+            Write-Note 'Skipped. ~/app is empty.'
+        }
     }
     Write-Host ''
 }
 
+# ----------------------------------------------------------------- summary ---
+
 Write-Step "'$Name' summary"
+
+if ($handoffGitHub) {
+    if ($handoffOk) {
+        Write-Note "GitHub: gh and git in the VM use this host's token ($($ghLogin.Login)); revoking it logs both out."
+    } else {
+        Write-Note 'GitHub: the token hand-off FAILED (see above); gh in the VM is not logged in.'
+    }
+}
+
 if ($Repo -and $repoReady) {
     Write-Note "~/app has $Repo checked out, dependencies installed."
 }
 elseif ($Repo) {
-    Write-Note "~/app is EMPTY. To finish the checkout: ssh dev@$ip -t ""bash /tmp/github-setup.sh '$Repo'"""
+    Write-Note "~/app is EMPTY. To finish the checkout: ssh dev@$ip -t ""bash /tmp/devvm-setup.sh clone '$Repo'"""
     Write-Note "Or clone it yourself over agent forwarding: ssh -A dev@$ip"
 }
 else {
     Write-Note '~/app is empty - no -Repo was given.'
 }
+
 Write-Note "Lost the password? .\Get-DevVMPassword.ps1 -Name $Name   (or set one: .\Set-DevVMPassword.ps1)"
-Write-Note 'The emulator is still resuming from the golden snapshot; give it a few seconds.'
-Write-Note "Log the agent in once in this VM: ssh dev@$ip -t claude   (then /login, subscription account)."
+if (-not $DeviceSerial) {
+    Write-Note 'The emulator is still resuming from the golden snapshot; give it a few seconds.'
+}
+
+if ($handoffClaude -and $handoffOk) {
+    Write-Note "Claude Code is logged in via the token in ~/.claude/settings.json (from $ClaudeTokenPath)."
+    Write-Note "Verify: ssh dev@$ip claude -p 'say ok'"
+}
+else {
+    if ($handoffClaude) { Write-Note 'Claude: the token hand-off FAILED (see above).' }
+    Write-Note "Log the agent in once in this VM: ssh dev@$ip -t claude   (then /login, subscription account)."
+}

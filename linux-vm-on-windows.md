@@ -82,7 +82,7 @@ Reserve ~12 GB for Windows itself and headroom. That leaves ~52 GB for guests.
 | Android | cmdline-tools, platform-tools, build-tools, one platform (e.g. API 35), one x86_64 system image (Google APIs), pre-created AVD, `/dev/kvm` access for the `dev` user (`kvm` group) |
 | Agent | Claude Code, Android MCP server (e.g. `mobile-mcp`), shared `~/.claude/` config and global `CLAUDE.md` conventions |
 | Access | `dev` user with your SSH public key, sudo NOPASSWD, RDP password set by cloud-init |
-| Project | Cloned after boot over an interactive SSH login to GitHub, then `npm install`; project-specific env in `~/.env` |
+| Project | Cloned after boot over SSH, with the host's `gh` token or an interactive GitHub login, then `npm install`; project-specific env in `~/.env` |
 
 ### Emulator configuration
 
@@ -169,7 +169,7 @@ With these settings, each guest pixel maps to one host pixel and colours are tra
 
 ## 7. Claude Code in each VM
 
-- Installed globally in the golden image, with no credentials in it, along with the Claude Code extension for VS Code so the agent is usable from the RDP desktop as well as from a shell. Authentication is a one-off interactive `/login` against your Claude subscription in each new VM; the token lands in the guest's `~/.claude/` and survives reboots. (An API key injected per VM by cloud-init is the alternative — fewer manual steps, but a long-lived secret sitting in every guest.)
+- Installed globally in the golden image, with no credentials in it, along with the Claude Code extension for VS Code so the agent is usable from the RDP desktop as well as from a shell. Authentication is per VM, against your Claude subscription: `New-DevVM.ps1` offers to hand over a long-lived `claude setup-token` token over SSH after boot, into the guest's `~/.claude/settings.json`, or you run a one-off interactive `/login` in the guest. Either way the token lands in that guest's `~/.claude/` and survives reboots. (An API key injected per VM by cloud-init was the alternative considered — but it bills per token instead of using the subscription, and the seed ISO stays attached and readable inside the guest.)
 - **Android MCP server** configured in `~/.claude/` so the agent has tools such as `take_screenshot`, `list_elements_on_screen`, `tap_element`, `type_text`, `swipe`. This is far more reliable than raw `adb shell input tap x y`.
 - A global `CLAUDE.md` in the image covers shared conventions: how to start the emulator, how to reload Metro, where to save screenshots, the verification loop (build → reload → screenshot → inspect → act).
 - Each project's repo adds its own `CLAUDE.md` for app-specific context.
@@ -316,7 +316,7 @@ Keep an Ansible inventory of live VMs (`app-foo ansible_host=192.168.1.51`, …)
 - **No GPU acceleration** in the guests; the emulator uses SwiftShader. Fine for RN UI, slow for heavy 3D/games — use physical devices for those (§12–13).
 - **Dynamic Memory and checkpoints** must be off on nested-virt VMs; plan RAM statically.
 - **One hypervisor per host**: Hyper-V and VirtualBox/VMware won't coexist at full speed.
-- **Secrets**: nothing credential-shaped goes into the golden image. The agent logs in per VM against the subscription; anything else a project needs is injected by cloud-init into `~/.env`.
+- **Secrets**: nothing credential-shaped goes into the golden image or onto the seed ISO, which stays attached and readable inside the guest. Logins are handed to each VM over SSH after boot by `New-DevVM.ps1`, or done by hand in the guest; anything else a project needs is injected by cloud-init into `~/.env`.
 - **Differencing disks** depend on the parent — never modify or delete the golden `.vhdx` while children exist; build a new golden file for upgrades and migrate.
 
 ---

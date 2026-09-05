@@ -122,8 +122,8 @@ until its last child is removed.
 Run from `scratch\`, in an elevated shell. About two minutes to a running VM.
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo you/foo                       # prompts for the GitHub login at the end
-.\New-DevVM.ps1 -Name app-foo -Repo you/foo -SkipGitHubLogin      # unattended; ~/app stays empty
+.\New-DevVM.ps1 -Name app-foo -Repo you/foo                       # offers your GitHub + Claude logins, then clones
+.\New-DevVM.ps1 -Name app-foo -Repo you/foo -SkipGitHubLogin -SkipClaudeLogin   # no prompts, no credentials; ~/app stays empty
 .\New-DevVM.ps1 -Name app-scratch                                 # no repo at all
 .\New-DevVM.ps1 -Name app-bar -Repo you/bar -DeviceSerial 3A9X0T2K -HostIp 192.168.1.10   # phone, no emulator
 .\New-DevVM.ps1 -Name app-foo2 -Repo you/foo -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
@@ -133,26 +133,40 @@ Run from `scratch\`, in an elevated shell. About two minutes to a running VM.
 
 1. Preflight: elevation, the Hyper-V module, the golden image, `oscdimg`, your SSH public
    key, the switch, and that neither the VM name nor the project folder exists yet.
-2. Creates a differencing disk against the golden image and a Generation 2 VM with static
+2. Offers this host's logins, each a separate yes/no with its own `-Skip` switch: the
+   GitHub token `gh` holds here (plus your global git identity), and a long-lived Claude
+   **subscription** token from `claude setup-token`, cached at `-ClaudeTokenPath` and
+   minted on first use. Asked now so the build below runs uninterrupted; delivered in
+   step 7. Each prompt spells out where the credential ends up and what it shares.
+3. Creates a differencing disk against the golden image and a Generation 2 VM with static
    memory, nested virtualization, MAC spoofing, Secure Boot off and checkpoints disabled.
    All of that is required for KVM inside the guest.
-3. Renders the cloud-init seed: hostname, the `dev` user with your SSH key and passwordless
+4. Renders the cloud-init seed: hostname, the `dev` user with your SSH key and passwordless
    sudo, the RDP password, `~/.env` with the project name and adb settings, and a `runcmd`
    that creates `~/app`, starts the emulator from the golden snapshot (emulator VMs only)
    and opens a `tmux` session named `agent`. Builds `seed.iso` and attaches it as a DVD
    drive, then puts the disk back first in the boot order.
-4. Starts the VM and polls for a DHCP address.
-5. Writes `<Name>.rdp` with lossless settings and prints the connection lines: SSH with
+5. Starts the VM and polls for a DHCP address.
+6. Writes `<Name>.rdp` with lossless settings and prints the connection lines: SSH with
    the tmux session, RDP with the password, the emulator's adb address or the phone's
    serial, a screenshot command, and the Metro URL.
-6. With `-Repo` and without `-SkipGitHubLogin`, asks whether to log into GitHub in the
-   guest now. Yes copies a setup script over and runs it over `ssh -t`: installs the
-   GitHub CLI, `gh auth login`, `gh auth setup-git`, clones into `~/app`, `npm install`
-   if there is a `package.json`. The script stays at `/tmp/github-setup.sh` in the guest,
-   so a declined or failed run can be finished later with the command the summary prints.
+7. Once SSH answers and cloud-init has finished, copies `devvm-setup.sh` to `/tmp` in the
+   guest and pipes the accepted credentials to it on stdin (never as arguments):
+   `gh auth login --with-token`, `gh auth setup-git`,
+   `git config --global user.*`, and the Claude token into `~/.claude/settings.json` as
+   `env.CLAUDE_CODE_OAUTH_TOKEN`, which logs in the CLI and the VS Code extension alike.
+8. With `-Repo` and without `-SkipGitHubLogin`: if the GitHub token went over, clones into
+   `~/app` and runs `npm install` straight away. Otherwise asks whether to log into GitHub
+   in the guest now, and runs the same script over `ssh -t` so `gh auth login` can prompt,
+   giving that VM a token of its own. The script stays at `/tmp/devvm-setup.sh` in the
+   guest, so a declined or failed run can be finished later with the command the summary
+   prints.
 
-Nothing GitHub-related goes into the golden image or onto the seed ISO. The seed ISO stays
-attached and readable inside the guest, which is why the clone is not part of first boot.
+Nothing GitHub- or Claude-related goes into the golden image or onto the seed ISO. The seed
+ISO stays attached and readable inside the guest, which is why none of this is part of first
+boot. A copied GitHub token is shared with the host: revoking it logs both out. The Claude
+token overrides `/login` in that VM; delete the `env` entry from the settings file to switch
+accounts there.
 
 **Parameters**
 
@@ -160,7 +174,9 @@ attached and readable inside the guest, which is why the clone is not part of fi
 |---|---|---|
 | `-Name` | required | VM name, hostname, folder and `.rdp` name |
 | `-Repo` | none | Anything `gh repo clone` takes, or a git URL for a non-GitHub host |
-| `-SkipGitHubLogin` | off | Never ask about the checkout |
+| `-SkipGitHubLogin` | off | Never copy the gh token, never offer the login, never clone |
+| `-SkipClaudeLogin` | off | Never offer the Claude token |
+| `-ClaudeTokenPath` | `~\.devvm\claude-oauth-token` | Cached `claude setup-token` token; created on first use, your account only |
 | `-Memory` | 10 GB, or 6 GB with `-DeviceSerial` | Static RAM |
 | `-Cpus` | 4 | Virtual processors |
 | `-DeviceSerial` | none | adb serial of a phone; skips the emulator |
