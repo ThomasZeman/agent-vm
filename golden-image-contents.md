@@ -70,11 +70,14 @@ time.
 |---|---|---|
 | Node.js | 22.x LTS (`node_major`) | NodeSource apt repo |
 | npm | bundled with Node | |
-| OpenJDK | 17 (JDK, not JRE) | Ubuntu archive |
+| OpenJDK | 21 and 17 (JDKs, not JREs); 21 is the default | Ubuntu archive |
 | watchman | newest release with a Linux zip | GitHub releases — **optional** |
 | C/C++ toolchain | `build-essential`, `cmake`, `ninja-build`, `pkg-config`, `python3-dev` | Ubuntu archive |
 
-JDK 17 specifically: it is the JDK current Android Gradle Plugin supports.
+JDK 21 is the default because `@capacitor/android` compiles its own sources at Java 21 from
+Capacitor 7 on. JDK 17 is installed beside it for projects whose Gradle predates 8.5 and so
+cannot run on a 21 JDK; those select it by overriding `JAVA_HOME`. `java` and `javac` on
+`PATH` are pinned to 21 with `update-alternatives`, so they agree with `JAVA_HOME`.
 
 The C/C++ toolchain is required even though nothing in a React Native `package.json` names
 it. `node-gyp` compiles the native halves of ordinary npm dependencies, and React Native's
@@ -230,7 +233,7 @@ Three files in `/etc/profile.d/`, so login shells and cloud-init both see them:
 | File | Exports |
 |---|---|
 | `android.sh` | `ANDROID_HOME`, `ANDROID_SDK_ROOT`, and `PATH` += `cmdline-tools/latest/bin`, `platform-tools`, `emulator`, `~/bin` |
-| `java.sh` | `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64` |
+| `java.sh` | `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64` |
 
 `JAVA_HOME` is set explicitly because Gradle will find a JDK on `PATH` but the React Native and
 Capacitor CLIs read the variable directly and print "JAVA_HOME is not set" rather than falling
@@ -302,7 +305,7 @@ which stays attached to the VM and readable from inside it.
 | Capability | Provided by |
 |---|---|
 | **React web** (Vite + React + TS) | Node + npm |
-| **React Native (Android)** | JDK 17, the Android SDK, CMake + Ninja, `build-essential` |
+| **React Native (Android)** | JDK 21 (17 also present), the Android SDK, CMake + Ninja, `build-essential` |
 | **Capacitor (Android)** | the same toolchain |
 | **Android emulator** | AVD `dev` resumed from the `golden` snapshot on KVM |
 | **Screenshot / UI verification loop** | `adb exec-out screencap`, animations already disabled |
@@ -328,7 +331,7 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | Ubuntu ISO | `Build-GoldenImage.ps1` reads the published `SHA256SUMS` and takes the highest point release | current 24.04.x |
 | Ubuntu packages | `apt-get upgrade` in `10-desktop-xrdp.sh` | current archive |
 | Node | NodeSource `setup_22.x` | newest 22.x |
-| OpenJDK | `openjdk-17-jdk` from the archive | newest 17.x |
+| OpenJDK | `openjdk-21-jdk` and `openjdk-17-jdk` from the archive | newest 21.x and 17.x |
 | Android API + system image | newest API that has a `google_apis;x86_64` image | resolved by the build's pinned `sdkmanager --list` |
 | Android build-tools | newest stable with a major <= the resolved API | resolved by the build's pinned `sdkmanager --list` |
 | `cmdline-tools` | bootstrapped from a pinned zip, then `sdkmanager --install "cmdline-tools;latest"` | current |

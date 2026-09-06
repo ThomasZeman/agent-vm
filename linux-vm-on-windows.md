@@ -78,7 +78,7 @@ Reserve ~12 GB for Windows itself and headroom. That leaves ~52 GB for guests.
 | Layer | Contents |
 |---|---|
 | OS | Ubuntu 24.04 Server + `xubuntu-core` (XFCE), `xrdp`, `openssh-server`, `cloud-init` |
-| Runtime | Node LTS (via nvm or NodeSource), OpenJDK 17, watchman |
+| Runtime | Node LTS (via nvm or NodeSource), OpenJDK 21 + 17, watchman |
 | Android | cmdline-tools, platform-tools, build-tools, one platform (e.g. API 35), one x86_64 system image (Google APIs), pre-created AVD, `/dev/kvm` access for the `dev` user (`kvm` group) |
 | Agent | Claude Code, Android MCP server (e.g. `mobile-mcp`), shared `~/.claude/` config and global `CLAUDE.md` conventions |
 | Access | `dev` user with your SSH public key, sudo NOPASSWD, RDP password set by cloud-init |
@@ -187,7 +187,7 @@ packer/
   http/user-data           # Ubuntu autoinstall config (disk, user, ssh)
   scripts/
     10-desktop-xrdp.sh     # XFCE, xrdp, lossless settings
-    20-node-java.sh        # Node LTS, JDK 17, watchman
+    20-node-java.sh        # Node LTS, JDK 21 + 17, watchman
     30-android-sdk.sh      # cmdline-tools, platform-tools, system image, AVD
     40-emulator-snapshot.sh# boot AVD once, save "golden" snapshot
     50-claude.sh           # Claude Code CLI + VS Code extension, MCP server, global CLAUDE.md

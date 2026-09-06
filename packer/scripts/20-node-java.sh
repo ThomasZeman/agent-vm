@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Node LTS, JDK 17, a C/C++ toolchain and watchman - the React Native build toolchain.
+# Node LTS, JDK 21 + 17, a C/C++ toolchain and watchman - the React Native build toolchain.
 
 set -euo pipefail
 
@@ -17,17 +17,28 @@ apt_get() {
 # Empty means "resolve the newest release that actually ships a linux build" - see below.
 : "${WATCHMAN_VERSION:=}"
 
-echo "==> OpenJDK 17 (Gradle's supported JDK for current AGP)"
-apt_get install -y openjdk-17-jdk
+echo "==> OpenJDK 21 and 17"
+# 21 is the default: @capacitor/android compiles its own sources at Java 21 from Capacitor 7
+# on, so a 17-only image fails those builds outright. 17 stays alongside it for projects
+# whose Gradle predates 8.5 and so cannot run on a 21 JDK at all; they pick it by overriding
+# JAVA_HOME. Anything newer builds a 17 target fine on the 21 JDK via --release.
+apt_get install -y openjdk-21-jdk openjdk-17-jdk
 
 echo "==> JAVA_HOME (system-wide)"
 # Gradle finds a JDK on PATH, but the React Native and Capacitor CLIs read JAVA_HOME
 # directly and print "JAVA_HOME is not set" rather than falling back, so set it here
 # instead of leaving every project to discover the omission.
 sudo tee /etc/profile.d/java.sh >/dev/null <<'JAVA'
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 JAVA
 sudo chmod 644 /etc/profile.d/java.sh
+
+# Both packages register update-alternatives entries, and the winner is decided by package
+# priority - which is not something to leave to chance when it decides what `java` on PATH
+# means. Point the alternatives at 21 so PATH and JAVA_HOME agree.
+for tool in java javac; do
+    sudo update-alternatives --set "$tool" "/usr/lib/jvm/java-21-openjdk-amd64/bin/$tool"
+done
 
 echo "==> C/C++ toolchain"
 # Not optional despite nothing here naming it. node-gyp compiles the native halves of
@@ -90,6 +101,7 @@ echo "==> versions"
 node --version
 npm --version
 java -version 2>&1 | head -n1
+echo "also installed: $(ls -d /usr/lib/jvm/java-1?-openjdk-amd64 | tr '\n' ' ')"
 echo "watchman: ${watchman_status}"
 
 echo "==> 20-node-java.sh done"

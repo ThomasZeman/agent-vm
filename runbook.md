@@ -153,7 +153,7 @@ sudo systemctl enable xrdp && sudo systemctl restart xrdp
 ### 2.3 `20-node-java.sh` — **[B]**
 
 ```bash
-sudo apt-get install -y openjdk-17-jdk
+sudo apt-get install -y openjdk-21-jdk openjdk-17-jdk
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 curl -fsSL -o /tmp/watchman.zip \

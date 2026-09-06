@@ -211,7 +211,7 @@ hash -r
 echo "==> AVD ${AVD_NAME}"
 # avdmanager, unlike sdkmanager, is still the classic Java launcher in cmdline-tools 23.0, so
 # this is the release just installed and it behaves as it always has. It needs a JDK on PATH
-# or JAVA_HOME - 20-node-java.sh installs OpenJDK 17, which is what these classes target.
+# or JAVA_HOME - 20-node-java.sh installs OpenJDK 21 and points both at it.
 # Same reasoning as the licences above: answers on stdin, not through a pipe. ("no" declines
 # avdmanager's "do you want to create a custom hardware profile?" prompt.)
 avdmanager create avd \
