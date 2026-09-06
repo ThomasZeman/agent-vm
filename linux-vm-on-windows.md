@@ -80,7 +80,8 @@ Reserve ~12 GB for Windows itself and headroom. That leaves ~52 GB for guests.
 | OS | Ubuntu 24.04 Server + `xubuntu-core` (XFCE), `xrdp`, `openssh-server`, `cloud-init` |
 | Runtime | Node LTS (via nvm or NodeSource), SDKMAN with Temurin 21 + 17, watchman |
 | Android | cmdline-tools, platform-tools, build-tools, one platform (e.g. API 35), one x86_64 system image (Google APIs), pre-created AVD, `/dev/kvm` access for the `dev` user (`kvm` group) |
-| Agent | Claude Code, Android MCP server (e.g. `mobile-mcp`), shared `~/.claude/` config and global `CLAUDE.md` conventions |
+| Web | Chrome and Chromium, Playwright with the Chromium/Firefox/WebKit builds baked in |
+| Agent | Claude Code, Android MCP server (e.g. `mobile-mcp`), the Claude in Chrome extension force-installed into Chrome, shared `~/.claude/` config and global `CLAUDE.md` conventions |
 | Access | `dev` user with your SSH public key, sudo NOPASSWD, RDP password set by cloud-init |
 | Project | Cloned after boot over SSH, with the host's `gh` token or an interactive GitHub login, then `npm install`; project-specific env in `~/.env` |
 
@@ -188,6 +189,7 @@ packer/
   scripts/
     10-desktop-xrdp.sh     # XFCE, xrdp, lossless settings
     20-node-java.sh        # Node LTS, SDKMAN + Temurin 21/17, watchman
+    25-ide-browser.sh      # VS Code, gh, Chrome + Claude extension, Chromium, Playwright
     30-android-sdk.sh      # cmdline-tools, platform-tools, system image, AVD
     40-emulator-snapshot.sh# boot AVD once, save "golden" snapshot
     50-claude.sh           # Claude Code CLI + VS Code extension, MCP server, global CLAUDE.md

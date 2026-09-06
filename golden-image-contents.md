@@ -119,11 +119,34 @@ slower on a large tree, identical in behaviour. A failure here warns and continu
 - **GitHub CLI (`gh`)**, from the GitHub apt repository, keyed through
   `/etc/apt/keyrings/githubcli-archive-keyring.gpg` with `signed-by`. The binary only: it
   is logged into nothing, and section 10 covers what stays out.
+- **Google Chrome**, from Google's apt repository — the host for the Claude extension below.
+- **Claude in Chrome extension** (`fcoeoabgfenejglbffodgkkbkcdhcgfn`), force-installed
+  through an `ExtensionInstallForcelist` entry in
+  `/etc/opt/chrome/policies/managed/claude-in-chrome.json`. Chrome fetches the extension
+  itself on first launch; the build only writes and JSON-checks the policy.
 - **Chromium**, `apt` first with a `snap install chromium` fallback. Convenience for web
   work rather than a build dependency, so a failure warns and the image is still good.
+- **Playwright** (`@playwright/test`, global) with the Chromium, Firefox and WebKit builds
+  in `~/.cache/ms-playwright` and their shared libraries via `playwright install-deps`.
+  Unlike Chromium, this one is fatal on failure. `PLAYWRIGHT_VERSION` and
+  `PLAYWRIGHT_BROWSERS` control it.
 
 Bare XFCE ships with neither an editor nor a browser, which is the reason this script
 exists; `gh` rides along because every project VM ends up wanting it.
+
+Chrome is present *as well as* Chromium because of how Claude Code reaches the extension:
+through a native messaging host — a manifest in the browser's config directory naming a
+binary the browser launches. The Chromium snap satisfies neither half, keeping its config
+under `~/snap/chromium` and refusing to launch a binary from `/usr/local`, and the
+integration supports Chrome, Edge and the unconfined Chromium forks rather than Chromium
+itself. Claude Code writes that manifest itself on the first `claude --chrome`, so nothing
+about it is baked into the image.
+
+Playwright's browsers sit in the `dev` user's cache, where Playwright looks by default —
+no `PLAYWRIGHT_BROWSERS_PATH` to export, and so nothing to go missing in the profile-less
+shells that run tests over `ssh`. A project depending on a different `@playwright/test`
+than the global one downloads its own matching build into that same cache on first run: a
+slower first test, not a failure, and the reason nothing here is pinned.
 
 ## 5. Android SDK and emulator
 
@@ -309,7 +332,9 @@ Finally `fstrim -av` zeroes free space so `Optimize-VHD` can compact the VHDX.
 
 Not present for other reasons: **no project repository**, **no warm npm cache**, **no Claude
 credentials**, **no Gradle cache** — the first `./gradlew assembleDebug` in a fresh VM
-downloads the wrapper distribution and dependencies.
+downloads the wrapper distribution and dependencies. The Claude in Chrome extension is
+installed but signed into nothing, on the same terms as Claude Code itself: the login
+happens once per guest and stays there.
 
 **No git or GitHub identity of any kind**, deliberately: no `known_hosts` entry for
 github.com, no deploy key, no token, and no `git config` user. The `gh` binary is installed
@@ -329,8 +354,10 @@ which stays attached to the VM and readable from inside it.
 | **Android emulator** | AVD `dev` resumed from the `golden` snapshot on KVM |
 | **Screenshot / UI verification loop** | `adb exec-out screencap`, animations already disabled |
 | **adb from the Windows host** | `adb-bridge.service` |
+| **Browser end-to-end tests** | Playwright with Chromium, Firefox and WebKit already downloaded |
 | **Desktop IDE** | VS Code over lossless xrdp |
 | **Agent-driven UI work** | Claude Code + the `mobile` MCP server |
+| **Agent-driven browser work** | `claude --chrome` against Chrome and the Claude in Chrome extension |
 
 `packer/README.md` has the acceptance checks to run against a freshly built image, including
 one real `./gradlew assembleDebug` — the only check that actually exercises the C/C++
@@ -358,7 +385,11 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | `platform-tools` (adb), `emulator` | `sdkmanager --install` with no revision | current |
 | VS Code | Microsoft `stable` channel | current |
 | GitHub CLI | GitHub apt repository, `stable` | current |
+| Google Chrome | Google's apt repository, `stable` | current |
+| Claude in Chrome extension | `ExtensionInstallForcelist` policy, fetched by Chrome | current Web Store release |
 | Chromium | apt, snap fallback | current |
+| Playwright | `npm install -g @playwright/test` | current |
+| Playwright browsers | `playwright install` for the resolved Playwright version | the builds that version pins |
 | Claude Code | `npm install -g @anthropic-ai/claude-code` | current |
 | Claude Code extension for VS Code | `code --install-extension anthropic.claude-code` | current Marketplace release |
 | `mobile` MCP server | `npx -y @mobilenext/mobile-mcp@latest` | current *at every launch* |

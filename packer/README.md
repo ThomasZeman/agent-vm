@@ -12,7 +12,7 @@ Build-GoldenImage.ps1          Wrapper: build -> move -> compact -> mark read-on
 http/user-data.pkrtpl.hcl      Ubuntu autoinstall (templated with your SSH public key)
 scripts/10-desktop-xrdp.sh     XFCE, xrdp, lossless RDP settings (§6)
 scripts/20-node-java.sh        Node LTS, SDKMAN + Temurin 21/17, C/C++ toolchain, watchman
-scripts/25-ide-browser.sh      VS Code, xdg-utils, Chromium
+scripts/25-ide-browser.sh      VS Code, xdg-utils, gh, Chrome + Claude extension, Chromium, Playwright
 scripts/30-android-sdk.sh      SDK, system image, the "dev" AVD, ~/bin/emu, adb bridge
 scripts/40-emulator-snapshot.sh  Boots the AVD once, saves the "golden" snapshot
 scripts/50-claude.sh           Claude Code (CLI + VS Code extension), mobile MCP server, global CLAUDE.md
@@ -104,7 +104,7 @@ ISO entirely (no `dev` user, no key, no repo) and fight each other for a single 
 ## Toolchain versions
 
 **The image tracks latest on purpose.** The Ubuntu point release, the Android API, build-tools,
-`cmdline-tools`, adb, the emulator, VS Code, Chromium and Claude Code all resolve to the
+`cmdline-tools`, adb, the emulator, VS Code, the browsers, Playwright and Claude Code all resolve to the
 current version at build time — rebuilding is how the toolchain moves forward, so there is no
 reproducible-build goal and two builds from one commit are not the same image.
 
@@ -254,6 +254,18 @@ ssh dev@<ip> java -version       # 21.x too - the /usr/local/bin symlinks, not S
 cc --version && cmake --version && ninja --version
 code --version
 code --list-extensions       # anthropic.claude-code
+google-chrome --version
+playwright --version
+ls ~/.cache/ms-playwright    # chromium-*, firefox-*, webkit-*
+npx playwright test --browser=chromium --list   # in a project, resolves without downloading
+```
+
+The Claude in Chrome extension only downloads when Chrome first starts, so check it from
+the desktop rather than over SSH:
+
+```bash
+google-chrome &               # over RDP; then chrome://extensions shows "Claude", force-installed
+claude --chrome               # /chrome reports Status: Enabled, Extension: Installed
 ```
 
 And one real build, because it is the only check that exercises the C/C++ toolchain:

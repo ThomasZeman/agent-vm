@@ -154,6 +154,24 @@ variable "watchman_version" {
   default     = ""
 }
 
+variable "jdk_majors" {
+  type        = string
+  description = "Space-separated JDK majors to install through SDKMAN. The first one becomes the default JDK."
+  default     = "21 17"
+}
+
+variable "playwright_version" {
+  type        = string
+  description = "npm version range for @playwright/test. Empty (the default) takes latest; the browser builds are downloaded to match whichever version this resolves to."
+  default     = ""
+}
+
+variable "playwright_browsers" {
+  type        = string
+  description = "Space-separated Playwright browsers to bake in. Each one is ~100 MB in the image and a download a VM does not have to repeat."
+  default     = "chromium firefox webkit"
+}
+
 # ------------------------------------------------------------------ seed ---
 
 locals {
@@ -268,12 +286,17 @@ build {
     environment_vars = [
       "NODE_MAJOR=${var.node_major}",
       "WATCHMAN_VERSION=${var.watchman_version}",
+      "JDK_MAJORS=${var.jdk_majors}",
     ]
   }
 
   provisioner "shell" {
     script          = "${path.root}/scripts/25-ide-browser.sh"
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} bash '{{ .Path }}'"
+    environment_vars = [
+      "PLAYWRIGHT_VERSION=${var.playwright_version}",
+      "PLAYWRIGHT_BROWSERS=${var.playwright_browsers}",
+    ]
   }
 
   provisioner "shell" {
