@@ -153,7 +153,12 @@ sudo systemctl enable xrdp && sudo systemctl restart xrdp
 ### 2.3 `20-node-java.sh` — **[B]**
 
 ```bash
-sudo apt-get install -y openjdk-21-jdk openjdk-17-jdk
+sudo apt-get install -y zip unzip
+curl -fsSL "https://get.sdkman.io?rcupdate=true" | bash
+source "$HOME/.sdkman/bin/sdkman-init.sh"
+sdk install java 17.0.16-tem     # the script resolves the newest per major instead
+sdk install java 21.0.8-tem
+sdk default java 21.0.8-tem
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 curl -fsSL -o /tmp/watchman.zip \

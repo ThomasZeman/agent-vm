@@ -70,14 +70,32 @@ time.
 |---|---|---|
 | Node.js | 22.x LTS (`node_major`) | NodeSource apt repo |
 | npm | bundled with Node | |
-| OpenJDK | 21 and 17 (JDKs, not JREs); 21 is the default | Ubuntu archive |
+| SDKMAN | current | `get.sdkman.io`, installed into `~/.sdkman` for the `dev` user |
+| Temurin JDK | newest 21.x (default) and newest 17.x | SDKMAN (`sdk install java`) |
 | watchman | newest release with a Linux zip | GitHub releases — **optional** |
 | C/C++ toolchain | `build-essential`, `cmake`, `ninja-build`, `pkg-config`, `python3-dev` | Ubuntu archive |
 
-JDK 21 is the default because `@capacitor/android` compiles its own sources at Java 21 from
-Capacitor 7 on. JDK 17 is installed beside it for projects whose Gradle predates 8.5 and so
-cannot run on a 21 JDK; those select it by overriding `JAVA_HOME`. `java` and `javac` on
-`PATH` are pinned to 21 with `update-alternatives`, so they agree with `JAVA_HOME`.
+The JDKs come from SDKMAN rather than the archive's `openjdk-*-jdk` packages, so a VM can
+add or switch majors itself — `sdk install java 25-tem`, no image rebuild and no root.
+`JDK_MAJORS` (default `21 17`) and `JDK_VENDOR` (default `tem`) control what the build
+installs; the first major listed becomes the SDKMAN default. Neither is pinned to a patch
+version: the build resolves the newest identifier per major out of `sdk list java`.
+
+21 leads because `@capacitor/android` compiles its own sources at Java 21 from Capacitor 7
+on. 17 is there for projects whose Gradle predates 8.5 and so cannot run on a 21 JDK at all;
+they select it with `sdk use java 17...` or by overriding `JAVA_HOME`.
+
+SDKMAN is a shell function in `~/.sdkman`, hooked into `~/.bashrc`, which covers interactive
+and login shells and nothing else — not systemd units, and not `ssh vm '<command>'`. Two
+things bridge that gap, both pointing at SDKMAN's `candidates/java/current` symlink so
+`sdk default java` stays the one place the version is decided:
+
+- `/etc/profile.d/java.sh` exports `SDKMAN_DIR`, `JAVA_HOME` and `PATH`;
+- `java`, `javac`, `jar`, `jarsigner` and `keytool` are symlinked into `/usr/local/bin`,
+  which is on the default non-interactive `PATH`.
+
+Both resolve through `/home/dev/.sdkman`, so the JDK is readable by `dev` and by root, and
+not by any other unprivileged user the guest might grow.
 
 The C/C++ toolchain is required even though nothing in a React Native `package.json` names
 it. `node-gyp` compiles the native halves of ordinary npm dependencies, and React Native's
@@ -233,11 +251,12 @@ Three files in `/etc/profile.d/`, so login shells and cloud-init both see them:
 | File | Exports |
 |---|---|
 | `android.sh` | `ANDROID_HOME`, `ANDROID_SDK_ROOT`, and `PATH` += `cmdline-tools/latest/bin`, `platform-tools`, `emulator`, `~/bin` |
-| `java.sh` | `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64` |
+| `java.sh` | `SDKMAN_DIR=/home/dev/.sdkman`, `JAVA_HOME=$SDKMAN_DIR/candidates/java/current`, and `PATH` += `$JAVA_HOME/bin` |
 
 `JAVA_HOME` is set explicitly because Gradle will find a JDK on `PATH` but the React Native and
 Capacitor CLIs read the variable directly and print "JAVA_HOME is not set" rather than falling
-back.
+back. Shells that read no profile at all are covered by the `/usr/local/bin` symlinks in
+section 3.
 
 ## 8. Services enabled at boot
 
@@ -305,7 +324,7 @@ which stays attached to the VM and readable from inside it.
 | Capability | Provided by |
 |---|---|
 | **React web** (Vite + React + TS) | Node + npm |
-| **React Native (Android)** | JDK 21 (17 also present), the Android SDK, CMake + Ninja, `build-essential` |
+| **React Native (Android)** | Temurin 21 (17 also installed), the Android SDK, CMake + Ninja, `build-essential` |
 | **Capacitor (Android)** | the same toolchain |
 | **Android emulator** | AVD `dev` resumed from the `golden` snapshot on KVM |
 | **Screenshot / UI verification loop** | `adb exec-out screencap`, animations already disabled |
@@ -331,7 +350,8 @@ So the defaults resolve "newest" at build time rather than naming a version:
 | Ubuntu ISO | `Build-GoldenImage.ps1` reads the published `SHA256SUMS` and takes the highest point release | current 24.04.x |
 | Ubuntu packages | `apt-get upgrade` in `10-desktop-xrdp.sh` | current archive |
 | Node | NodeSource `setup_22.x` | newest 22.x |
-| OpenJDK | `openjdk-21-jdk` and `openjdk-17-jdk` from the archive | newest 21.x and 17.x |
+| SDKMAN | install script from `get.sdkman.io` | current |
+| JDKs | newest `-tem` identifier per major in `sdk list java`, for each of `JDK_MAJORS` | newest Temurin 21.x and 17.x |
 | Android API + system image | newest API that has a `google_apis;x86_64` image | resolved by the build's pinned `sdkmanager --list` |
 | Android build-tools | newest stable with a major <= the resolved API | resolved by the build's pinned `sdkmanager --list` |
 | `cmdline-tools` | bootstrapped from a pinned zip, then `sdkmanager --install "cmdline-tools;latest"` | current |

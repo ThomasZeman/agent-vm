@@ -86,6 +86,11 @@ PROFILE
 sudo chmod 644 /etc/profile.d/android.sh
 # shellcheck disable=SC1091
 source /etc/profile.d/android.sh
+# The JDK lives under SDKMAN in the dev user's home now, and Packer runs this script in a
+# shell that reads neither .bashrc nor profile.d. sdkmanager and avdmanager below need a
+# JDK, so pull in what 20-node-java.sh exported.
+# shellcheck disable=SC1091
+source /etc/profile.d/java.sh
 
 # The BUILD is driven by the bootstrap sdkmanager from here on, and only the image's copy of
 # cmdline-tools is "latest". That split is deliberate.
@@ -211,7 +216,7 @@ hash -r
 echo "==> AVD ${AVD_NAME}"
 # avdmanager, unlike sdkmanager, is still the classic Java launcher in cmdline-tools 23.0, so
 # this is the release just installed and it behaves as it always has. It needs a JDK on PATH
-# or JAVA_HOME - 20-node-java.sh installs OpenJDK 21 and points both at it.
+# or JAVA_HOME - both come from /etc/profile.d/java.sh, sourced at the top of this script.
 # Same reasoning as the licences above: answers on stdin, not through a pipe. ("no" declines
 # avdmanager's "do you want to create a custom hardware profile?" prompt.)
 avdmanager create avd \

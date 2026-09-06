@@ -11,7 +11,7 @@ ubuntu-rn.pkr.hcl              Hyper-V ISO builder + provisioner wiring
 Build-GoldenImage.ps1          Wrapper: build -> move -> compact -> mark read-only
 http/user-data.pkrtpl.hcl      Ubuntu autoinstall (templated with your SSH public key)
 scripts/10-desktop-xrdp.sh     XFCE, xrdp, lossless RDP settings (§6)
-scripts/20-node-java.sh        Node LTS, OpenJDK 21 + 17, C/C++ toolchain, watchman
+scripts/20-node-java.sh        Node LTS, SDKMAN + Temurin 21/17, C/C++ toolchain, watchman
 scripts/25-ide-browser.sh      VS Code, xdg-utils, Chromium
 scripts/30-android-sdk.sh      SDK, system image, the "dev" AVD, ~/bin/emu, adb bridge
 scripts/40-emulator-snapshot.sh  Boots the AVD once, saves the "golden" snapshot
@@ -247,8 +247,10 @@ adb devices                      # emulator-5554  device
 systemctl status adb-bridge      # active; then Test-NetConnection <ip> -Port 5555 from the host
 claude --version
 node --version && java -version
-echo "$JAVA_HOME"                # /usr/lib/jvm/java-21-openjdk-amd64, not empty
-java -version                    # 21.x - matches JAVA_HOME; 17 is installed alongside it
+echo "$JAVA_HOME"                # ~/.sdkman/candidates/java/current, not empty
+java -version                    # Temurin 21.x
+sdk list java | grep installed   # 21 (default) and 17
+ssh dev@<ip> java -version       # 21.x too - the /usr/local/bin symlinks, not SDKMAN's hook
 cc --version && cmake --version && ninja --version
 code --version
 code --list-extensions       # anthropic.claude-code

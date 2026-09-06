@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Node LTS, JDK 21 + 17, a C/C++ toolchain and watchman - the React Native build toolchain.
+# Node LTS, JDKs via SDKMAN, a C/C++ toolchain and watchman - the React Native build toolchain.
 
 set -euo pipefail
 
@@ -16,29 +16,91 @@ apt_get() {
 : "${NODE_MAJOR:=22}"
 # Empty means "resolve the newest release that actually ships a linux build" - see below.
 : "${WATCHMAN_VERSION:=}"
+# JDK majors to install, and the FIRST one is the default. 21 leads because
+# @capacitor/android compiles its own sources at Java 21 from Capacitor 7 on, so an image
+# without it fails those builds outright. 17 follows for projects whose Gradle predates 8.5
+# and so cannot run on a 21 JDK at all; anything newer compiles a 17 target on the 21 JDK.
+: "${JDK_MAJORS:=21 17}"
+: "${JDK_VENDOR:=tem}"
 
-echo "==> OpenJDK 21 and 17"
-# 21 is the default: @capacitor/android compiles its own sources at Java 21 from Capacitor 7
-# on, so a 17-only image fails those builds outright. 17 stays alongside it for projects
-# whose Gradle predates 8.5 and so cannot run on a 21 JDK at all; they pick it by overriding
-# JAVA_HOME. Anything newer builds a 17 target fine on the 21 JDK via --release.
-apt_get install -y openjdk-21-jdk openjdk-17-jdk
+echo "==> SDKMAN"
+# SDKMAN rather than the archive's openjdk-*-jdk packages: JDK majors move faster than
+# Ubuntu does, and this puts switching one in the hands of whoever is using the VM - a
+# `sdk install java 25-tem` in the guest, no image rebuild, no root.
+apt_get install -y zip unzip
 
-echo "==> JAVA_HOME (system-wide)"
-# Gradle finds a JDK on PATH, but the React Native and Capacitor CLIs read JAVA_HOME
-# directly and print "JAVA_HOME is not set" rather than falling back, so set it here
-# instead of leaving every project to discover the omission.
-sudo tee /etc/profile.d/java.sh >/dev/null <<'JAVA'
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-JAVA
+export SDKMAN_DIR="$HOME/.sdkman"
+curl -fsSL "https://get.sdkman.io?rcupdate=true" | bash
+
+# Checked before -e comes off below, because from that point on a missing init script would
+# turn every `sdk` call into "command not found" and the build would carry on regardless.
+[ -r "$SDKMAN_DIR/bin/sdkman-init.sh" ] \
+    || { echo "ERROR: SDKMAN did not install into ${SDKMAN_DIR}" >&2; exit 1; }
+
+# sdkman-init.sh reads variables it has not set yet and ends on statements that return
+# non-zero, so `set -euo pipefail` kills this script the moment it is sourced. The SDKMAN
+# section runs with -e and -u relaxed and turns them back on at the end of it; the installs
+# below check their own exit status instead.
+set +eu
+# shellcheck disable=SC1091
+source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
+# Without this, `sdk install` stops to ask whether the new JDK should become the default
+# and waits on an answer that is never coming - the provisioner has no terminal.
+sed -i 's/^sdkman_auto_answer=.*/sdkman_auto_answer=true/' "$SDKMAN_DIR/etc/config"
+
+echo "==> JDKs (${JDK_MAJORS}; vendor ${JDK_VENDOR})"
+# SDKMAN identifiers carry the full version - "21.0.9-tem", not "21" - so pinning them here
+# would go stale the next time the vendor ships a patch. Resolve the newest identifier per
+# major out of `sdk list java`, whose rows run newest-first within a vendor.
+latest_jdk() {
+    sdk list java 2>/dev/null \
+        | grep -oE "[0-9]+(\.[0-9]+)+-${JDK_VENDOR}\b" \
+        | grep -E "^${1}\." \
+        | head -n1
+}
+
+default_jdk=""
+for major in $JDK_MAJORS; do
+    jdk_id="$(latest_jdk "$major")"
+    if [ -z "$jdk_id" ]; then
+        echo "ERROR: no ${JDK_VENDOR} build of Java ${major} in 'sdk list java'" >&2
+        exit 1
+    fi
+    echo "    ${jdk_id}"
+    sdk install java "$jdk_id" || { echo "ERROR: sdk install java ${jdk_id} failed" >&2; exit 1; }
+    [ -n "$default_jdk" ] || default_jdk="$jdk_id"
+done
+
+sdk default java "$default_jdk" || { echo "ERROR: sdk default java ${default_jdk} failed" >&2; exit 1; }
+
+# The downloaded tarballs are dead weight in an image that is about to be compacted.
+rm -rf "${SDKMAN_DIR:?}/archives/"* "${SDKMAN_DIR:?}/tmp/"*
+
+echo "==> JAVA_HOME and a java for shells SDKMAN never reaches"
+# SDKMAN is a shell function in a per-user directory, hooked into ~/.bashrc. That covers
+# interactive and login shells and nothing else - and "nothing else" here includes the
+# Packer provisioners that follow this script, systemd units, and `ssh vm '...'` command
+# invocations - none of which read .bashrc, and none of which would otherwise find a java
+# on PATH at all, since there is no longer one in /usr/bin.
+#
+# So: export the candidate path for shells that read profile.d (Gradle would find a JDK on
+# PATH anyway, but the React Native and Capacitor CLIs read JAVA_HOME directly and print
+# "JAVA_HOME is not set" rather than falling back), and symlink the tools that matter into
+# /usr/local/bin, which IS on the default non-interactive PATH, for the rest. Both go
+# through SDKMAN's "current" symlink, so `sdk default java` still decides the version.
+sudo tee /etc/profile.d/java.sh >/dev/null <<PROFILE
+export SDKMAN_DIR=${SDKMAN_DIR}
+export JAVA_HOME=${SDKMAN_DIR}/candidates/java/current
+export PATH="\$JAVA_HOME/bin:\$PATH"
+PROFILE
 sudo chmod 644 /etc/profile.d/java.sh
 
-# Both packages register update-alternatives entries, and the winner is decided by package
-# priority - which is not something to leave to chance when it decides what `java` on PATH
-# means. Point the alternatives at 21 so PATH and JAVA_HOME agree.
-for tool in java javac; do
-    sudo update-alternatives --set "$tool" "/usr/lib/jvm/java-21-openjdk-amd64/bin/$tool"
+for tool in java javac jar jarsigner keytool; do
+    sudo ln -sfn "${SDKMAN_DIR}/candidates/java/current/bin/${tool}" "/usr/local/bin/${tool}"
 done
+
+set -eu
 
 echo "==> C/C++ toolchain"
 # Not optional despite nothing here naming it. node-gyp compiles the native halves of
@@ -101,7 +163,7 @@ echo "==> versions"
 node --version
 npm --version
 java -version 2>&1 | head -n1
-echo "also installed: $(ls -d /usr/lib/jvm/java-1?-openjdk-amd64 | tr '\n' ' ')"
+echo "JDKs: $(ls "$SDKMAN_DIR/candidates/java" | grep -v '^current$' | tr '\n' ' ')"
 echo "watchman: ${watchman_status}"
 
 echo "==> 20-node-java.sh done"
