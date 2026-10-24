@@ -3,7 +3,7 @@
     Creates a per-project React Native development VM on Hyper-V from the golden Ubuntu image.
 
 .DESCRIPTION
-    Implements section 8.2 of linux-vm-on-windows.md:
+    How it works: DESIGN.md, section 5.
 
       1. Creates a differencing disk against the immutable golden VHDX (thin clone, seconds).
       2. Creates a Generation 2 VM with nested virtualization enabled, static memory,
@@ -62,7 +62,7 @@
     Virtual processor count. Default 4.
 
 .PARAMETER DeviceSerial
-    adb serial of a physical phone assigned to this project (section 13). When set, the guest
+    adb serial of a physical phone assigned to this project (DESIGN.md, section 8). When set, the guest
     skips the emulator and pins itself to that device through the host's adb server.
 
 .PARAMETER StartEmulator
@@ -456,11 +456,11 @@ function Wait-ForGuestIPv4 {
 Assert-Administrator
 
 if (-not (Get-Module -ListAvailable -Name Hyper-V)) {
-    throw 'The Hyper-V PowerShell module is not available. Enable the Hyper-V feature first (section 2).'
+    throw 'The Hyper-V PowerShell module is not available. Enable the Hyper-V feature first (DESIGN.md, section 2).'
 }
 
 if (-not (Test-Path -LiteralPath $GoldenVhdx)) {
-    throw "Golden image not found: $GoldenVhdx. Build it with Packer first (section 8.1)."
+    throw "Golden image not found: $GoldenVhdx. Build it first: packer\Build-GoldenImage.ps1."
 }
 
 if (-not (Test-Path -LiteralPath $OscdimgPath)) {
@@ -472,7 +472,7 @@ if (-not (Test-Path -LiteralPath $SshPublicKeyPath)) {
 }
 
 if (-not (Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue)) {
-    throw "Virtual switch '$SwitchName' does not exist. Create it once (section 2)."
+    throw "Virtual switch '$SwitchName' does not exist. Create it once (DESIGN.md, section 2)."
 }
 
 if (Get-VM -Name $Name -ErrorAction SilentlyContinue) {
@@ -485,12 +485,12 @@ if (Test-Path -LiteralPath $vmPath) {
 }
 
 if (-not $Memory) {
-    # Phone-backed VMs run no emulator, so they need markedly less RAM (section 13.3).
+    # Phone-backed VMs run no emulator, so they need markedly less RAM (DESIGN.md, section 8).
     $Memory = if ($DeviceSerial) { 6GB } else { 10GB }
 }
 
 if ($DeviceSerial -and -not $HostIp) {
-    throw '-DeviceSerial requires -HostIp: the guest talks to the adb server running on the host (section 13.1).'
+    throw '-DeviceSerial requires -HostIp: the guest talks to the adb server running on the host (DESIGN.md, section 8).'
 }
 
 if ($DeviceSerial -and $StartEmulator) {
@@ -604,7 +604,7 @@ Write-Step 'Creating the VM'
 New-VM -Name $Name -Generation 2 -MemoryStartupBytes $Memory `
        -VHDPath $diskPath -SwitchName $SwitchName -Path $VmRoot | Out-Null
 
-# Nested virtualization requires static memory and forbids checkpoints (section 10).
+# Nested virtualization requires static memory and forbids checkpoints (DESIGN.md, section 5).
 Set-VM -Name $Name -StaticMemory -AutomaticStartAction Nothing -AutomaticStopAction Shutdown
 Set-VM -Name $Name -CheckpointType Disabled
 Set-VMProcessor -VMName $Name -Count $Cpus -ExposeVirtualizationExtensions $true
@@ -634,7 +634,7 @@ write_files:
       # VM. Claude Code's subscription token, if New-AgentVM.ps1 handed one over after boot,
       # is in ~/.claude/settings.json; otherwise run `claude` and /login once.
       PROJECT=${NAME}
-      # Physical device mode (section 12). An empty ANDROID_SERIAL means the emulator.
+      # Physical device mode (DESIGN.md, section 8). An empty ANDROID_SERIAL means the emulator.
       ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET}
       ANDROID_SERIAL=${DEVICE_SERIAL}
 ${EMULATOR_AUTOSTART}
@@ -675,7 +675,7 @@ runcmd:
 # at every boot, with DISPLAY=:1 and therefore as a window (~/bin/emu only goes headless when
 # DISPLAY is unset). `defer` writes it after the users stage. Nothing here runs adb: host
 # access is adb-bridge.service, and `adb tcpip 5555` would knock the emulator off this VM's
-# own adb server (golden-image-contents.md, section 5).
+# own adb server (DESIGN.md, section 8).
 $emulatorAutostart = @'
   - path: /home/dev/.config/autostart/android-emulator.desktop
     owner: dev:dev
@@ -841,7 +841,7 @@ esac
 '@
 
 # A phone-backed guest points its adb client at the host's server; an emulator guest keeps
-# the local default (section 13.1).
+# the local default (DESIGN.md, section 8).
 $adbServerSocket = if ($DeviceSerial) { "tcp:${HostIp}:5037" } else { '' }
 $substitutions = [ordered]@{
     '${EMULATOR_AUTOSTART}' = $(if ($StartEmulator) { $emulatorAutostart } else { '' })
@@ -901,7 +901,7 @@ if (-not $ip) {
 
 # ------------------------------------------------------------- .rdp file ---
 
-# Lossless settings from section 6: 32-bit colour, no compression, smart sizing off,
+# Lossless settings (DESIGN.md, section 6): 32-bit colour, no compression, smart sizing off,
 # so one guest pixel maps to one host pixel.
 $rdpPath = Join-Path $RdpOutputDirectory "$Name.rdp"
 $rdpContent = @"

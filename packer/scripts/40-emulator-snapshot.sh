@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boot the AVD once and save a "golden" snapshot, so a freshly cloned VM has an emulator
-# on screen in seconds instead of 60-90 s (section 4).
+# on screen in seconds instead of 60-90 s (DESIGN.md, section 4).
 
 set -euo pipefail
 

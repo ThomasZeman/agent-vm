@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# XFCE desktop + xrdp, configured for lossless RDP (section 6).
+# XFCE desktop + xrdp, configured for lossless RDP (DESIGN.md, section 6).
 #
 # The point of the desktop is visual verification: every pixel the guest paints must reach
 # the host unchanged, so compression is off and colour depth is pinned to 32 bpp.

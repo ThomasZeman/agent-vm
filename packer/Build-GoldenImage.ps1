@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds the golden VHDX for React Native dev VMs (section 8.1 of linux-vm-on-windows.md).
+    Builds the golden VHDX for agent VMs (DESIGN.md, section 3).
 
 .DESCRIPTION
     Wraps the Packer build and the post-build steps that are easy to get wrong:
@@ -11,7 +11,7 @@
       3. Compacts it with Optimize-VHD - worth several GB after 90-cleanup.sh's fstrim.
       4. Marks it read-only, because every project VM reads it as a differencing parent.
 
-    Refuses to replace a golden image that still has children (section 10): differencing
+    Refuses to replace a golden image that still has children (DESIGN.md, section 3, "Upgrading"): differencing
     disks depend on the parent byte for byte, so a rebuild must go to a new filename and
     the old file has to stay until its last child is gone.
 
@@ -59,8 +59,8 @@
     So if the VM console shows the installer asking for a language, a keyboard layout, a disk
     layout or a username, the build has already failed - autoinstall never engaged, and Packer
     is waiting for an SSH login that will never come. Do not answer the questions by hand: the
-    machine you would get is not a golden image. Kill the build and see "The installer is
-    asking me questions" in README.md.
+    machine you would get is not a golden image. Kill the build and see DESIGN.md, section 3,
+    "The unattended install".
 
 .EXAMPLE
     .\Build-GoldenImage.ps1
@@ -267,7 +267,7 @@ if (-not (Get-Command packer -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue)) {
-    throw "Hyper-V switch '$SwitchName' does not exist. Create an external switch bound to your NIC first (section 2)."
+    throw "Hyper-V switch '$SwitchName' does not exist. Create an external switch bound to your NIC first (DESIGN.md, section 2)."
 }
 
 # The autoinstall seed is a CD Packer builds at run time; without an ISO tool it silently
@@ -398,8 +398,8 @@ if (-not $SkipBuild) {
     Write-Host '    Broken:   the console shows the installer asking for a language / keyboard /' -ForegroundColor Yellow
     Write-Host '              disk layout / username. That means autoinstall never engaged.' -ForegroundColor Yellow
     Write-Host '              Do not answer them. Diagnose from the VM console BEFORE Ctrl+C' -ForegroundColor Yellow
-    Write-Host '              (Packer deletes the VM on the way out): README.md, "The installer' -ForegroundColor Yellow
-    Write-Host '              is asking me questions".' -ForegroundColor Yellow
+    Write-Host '              (Packer deletes the VM on the way out): DESIGN.md, section 3,' -ForegroundColor Yellow
+    Write-Host '              "The unattended install".' -ForegroundColor Yellow
     Write-Host ''
 
     # Hyper-V's synthetic keyboard drops characters when Packer types the GRUB command at full
@@ -433,8 +433,8 @@ Read the LAST '==> hyperv-iso.ubuntu:' line above (or in log.txt) to see which s
 
   * If it says 'Timeout waiting for SSH' and no 'Provisioning with shell script' line ever
     appeared, the autoinstall never engaged and the VM sat on the interactive installer.
-    Retry with a larger -KeyInterval (currently $KeyInterval); see README.md, "The installer
-    is asking me questions".
+    Retry with a larger -KeyInterval (currently $KeyInterval); see DESIGN.md, section 3,
+    "The unattended install".
 
   * If a provisioner was running and a guest command failed (an apt error, a missing package,
     a failing 'tee', a non-zero exit N), then autoinstall and SSH worked fine - the fix is in
@@ -477,7 +477,7 @@ $final = Get-Item -LiteralPath $GoldenPath
 Write-Note "$([math]::Round($final.Length / 1GB, 2)) GB after compaction"
 
 Write-Step 'Marking read-only'
-# Cheap insurance for the rule in section 10: children read this file directly, so an
+# Cheap insurance for the rule in DESIGN.md, section 3, "Upgrading": children read this file directly, so an
 # accidental attach-and-boot would corrupt every VM at once.
 Set-ItemProperty -LiteralPath $GoldenPath -Name IsReadOnly -Value $true
 

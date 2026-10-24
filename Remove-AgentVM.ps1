@@ -3,7 +3,7 @@
     Removes a per-project React Native development VM created by New-AgentVM.ps1.
 
 .DESCRIPTION
-    The companion to New-AgentVM.ps1 (section 8.2 of linux-vm-on-windows.md):
+    The companion to New-AgentVM.ps1 (DESIGN.md, sections 5 and 11):
 
       1. Shuts the VM down - gracefully first, then forced if it does not stop in time.
       2. Removes the VM definition from Hyper-V.
@@ -128,7 +128,7 @@ function Stop-AgentVMHard {
 Assert-Administrator
 
 if (-not (Get-Module -ListAvailable -Name Hyper-V)) {
-    throw 'The Hyper-V PowerShell module is not available. Enable the Hyper-V feature first (section 2).'
+    throw 'The Hyper-V PowerShell module is not available. Enable the Hyper-V feature first (DESIGN.md, section 2).'
 }
 
 $vm = Get-VM -Name $Name -ErrorAction SilentlyContinue
@@ -147,7 +147,7 @@ if (-not $vm) {
 }
 
 # The golden VHDX is shared by every other project VM. Refuse outright if a disk attached to
-# this VM is a parent image or lives outside the project folder (section 10).
+# this VM is a parent image or lives outside the project folder (DESIGN.md, section 3, "Upgrading").
 $diskPaths = @()
 if ($vm) {
     $diskPaths = @(Get-VMHardDiskDrive -VMName $Name | Select-Object -ExpandProperty Path)

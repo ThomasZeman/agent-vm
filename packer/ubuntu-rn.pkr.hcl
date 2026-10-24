@@ -1,4 +1,4 @@
-# Golden image for React Native development VMs (section 8.1 of linux-vm-on-windows.md).
+# Golden image for agent VMs (DESIGN.md, section 3).
 #
 # Builds Ubuntu 24.04 + XFCE + Android SDK + a pre-booted AVD snapshot + Claude Code,
 # then generalizes the disk so New-AgentVM.ps1 can clone it with differencing disks.
@@ -105,7 +105,7 @@ variable "disk_size" {
   default     = 61440
 }
 
-# Toolchain versions. Bump these to rebuild the image on an upgrade (section 12).
+# Toolchain versions. Bump these to rebuild the image on an upgrade (DESIGN.md, section 3, "Versions").
 variable "android_api" {
   type        = string
   description = "Android API level for the platform, system image and AVD. Empty (the default) resolves the newest API that has a google_apis x86_64 system image - without one there is nothing to boot."
@@ -240,7 +240,7 @@ source "hyperv-iso" "ubuntu" {
   # and subiquity starts its INTERACTIVE installer - language, keyboard, storage, profile.
   # Nothing in this build ever answers those screens; Packer just waits for SSH until
   # ssh_timeout. Sitting on the installer means the boot command failed, not that the build
-  # wants input. See "The installer is asking me questions" in README.md.
+  # wants input. See DESIGN.md, section 3, "The unattended install".
   #
   # Start typing early and press <esc> three times: whenever the menu turns up inside that
   # window one of them lands on it and stops the countdown, and the extras are harmless -

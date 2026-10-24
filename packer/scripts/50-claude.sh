@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Claude Code, the Android MCP server, and the shared conventions file (section 7).
+# Claude Code, the Android MCP server, and the shared conventions file (DESIGN.md, section 4).
 #
-# No credentials here, and none injected later either (section 10): each VM authenticates
-# once interactively against your Claude subscription, and the token stays in that guest's
-# ~/.claude. The image must be login-free - it is shared by every project VM.
+# No credentials here (DESIGN.md, section 7). Each VM is logged in after boot against your
+# Claude subscription - by New-AgentVM.ps1 over SSH, or with /login in the guest - and the token
+# stays in that guest's ~/.claude. The image must be login-free: it is shared by every VM.
 
 set -euo pipefail
 
