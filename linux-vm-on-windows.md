@@ -174,7 +174,7 @@ With these settings, each guest pixel maps to one host pixel and colours are tra
 - **Android MCP server** configured in `~/.claude/` so the agent has tools such as `take_screenshot`, `list_elements_on_screen`, `tap_element`, `type_text`, `swipe`. This is far more reliable than raw `adb shell input tap x y`.
 - A global `CLAUDE.md` in the image covers shared conventions: how to start the emulator, how to reload Metro, where to save screenshots, the verification loop (build → reload → screenshot → inspect → act).
 - Each project's repo adds its own `CLAUDE.md` for app-specific context.
-- Run the agent in a `tmux` session started by cloud-init so it survives RDP/SSH disconnects; attach with `ssh dev@<vm-ip> -t tmux attach`.
+- Run the agent in the `tmux` session named `agent`, so it survives RDP/SSH disconnects. The session is opened inside the **agent desktop**, a persistent XFCE session on display `:1` that TigerVNC starts at boot, so it has `DISPLAY=:1` and any browser the agent launches appears there. RDP attaches to that same desktop (xrdp's "Agent desktop" session); `ssh dev@<vm-ip> -t tmux attach -t agent` is a second view of the same session.
 
 ---
 
@@ -305,7 +305,7 @@ Keep an Ansible inventory of live VMs (`app-foo ansible_host=192.168.1.51`, …)
 ## 9. Daily workflow
 
 1. `.\New-AgentVM.ps1 -Name app-bar -Repo …` — VM up in ~2 minutes, emulator already running from snapshot.
-2. `ssh dev@<ip> -t tmux attach` → start Claude Code on the task.
+2. Double-click `app-bar.rdp` (no prompt; the password is in Credential Manager), or `ssh dev@<ip> -t tmux attach -t agent` → start Claude Code on the task in the `agent` session.
 3. Claude builds, reloads Metro, screenshots, inspects, taps — via the MCP server — and saves PNGs to `~/shots/`.
 4. When you want to check: double-click `app-bar.rdp`, look at the emulator window at 1:1, use the RN inspector for numbers; open a PNG at 100 % and eyedropper anything where the exact hex matters.
 5. Stop VMs you're not using (`Stop-VM app-bar`) to keep within the 5–6 concurrent budget; they resume in seconds with their differencing disk intact.

@@ -8,7 +8,8 @@
       1. Shuts the VM down - gracefully first, then forced if it does not stop in time.
       2. Removes the VM definition from Hyper-V.
       3. Deletes the project folder: differencing disk, cloud-init seed ISO and VM config.
-      4. Deletes the generated .rdp file.
+      4. Deletes the generated .rdp file and the RDP password New-AgentVM.ps1 saved in
+         Credential Manager for its address.
 
     Everything in a project VM is disposable: the repo lives on the remote, the toolchain
     lives in the golden image, and a replacement is two minutes away. The one thing that is
@@ -191,6 +192,21 @@ if ($folderExists) {
 }
 if ($rdpExists) { Write-Note "deleting $rdpPath" }
 
+# New-AgentVM.ps1 saved the RDP password as TERMSRV/<address>. The .rdp file names the address
+# it was saved under; a running VM reports its current one. Collected now, before the VM
+# stops reporting anything.
+$rdpAddresses = @()
+if ($rdpExists) {
+    $rdpAddresses += @(Get-Content -LiteralPath $rdpPath |
+        Where-Object { $_ -match '^full address:s:(.+)$' } | ForEach-Object { $Matches[1].Trim() })
+}
+if ($vm) {
+    $rdpAddresses += @((Get-VMNetworkAdapter -VMName $Name).IPAddresses |
+        Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}$' -and $_ -notmatch '^169\.254\.' })
+}
+$rdpAddresses = @($rdpAddresses | Sort-Object -Unique)
+foreach ($address in $rdpAddresses) { Write-Note "deleting saved RDP credentials for $address" }
+
 $target = "$Name (VM" + $(if ($KeepFiles) { '' } else { " and $vmPath" }) + ')'
 if (-not $PSCmdlet.ShouldProcess($target, 'Remove dev VM')) {
     Write-Host 'Cancelled.'
@@ -236,6 +252,11 @@ if ($folderExists -and -not $KeepFiles) {
 
 if ($rdpExists) {
     Remove-Item -LiteralPath $rdpPath -Force -ErrorAction SilentlyContinue
+}
+
+# DHCP may hand the address to the next VM; a stale entry would log in with this one's password.
+foreach ($address in $rdpAddresses) {
+    & cmdkey.exe "/delete:TERMSRV/$address" | Out-Null
 }
 
 Write-Host ''

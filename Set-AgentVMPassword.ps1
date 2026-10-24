@@ -149,10 +149,42 @@ $target  = "${User}@${IpAddress}"
 $sshOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes')
 
 # stdin, not argv: keeps the password out of both process lists. tr strips the CRLF that
-# PowerShell appends to piped text.
-"${User}:${Password}" | & ssh @sshOpts $target "tr -d '\r' | sudo chpasswd"
+# PowerShell appends to piped text, and sed a UTF-8 byte order mark in front of it: Windows
+# PowerShell writes one whenever the console's input encoding is UTF-8 with a BOM (chcp
+# 65001, or a profile that sets [Console]::InputEncoding), and chpasswd then rejects user
+# "<BOM>dev" with "Authentication token manipulation error". New-AgentVM.ps1's hand-off
+# strips both in the guest for the same reason.
+"${User}:${Password}" | & ssh @sshOpts $target "sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' | sudo chpasswd"
 if ($LASTEXITCODE -ne 0) {
     throw "ssh exited $LASTEXITCODE; the password was NOT changed. Is the VM up and your key in ~/.ssh/authorized_keys of ${User}? A stale known_hosts entry for $IpAddress (ssh-keygen -R $IpAddress) also causes this."
+}
+
+# The agent desktop checks its own VNC password, not the Unix one (10-desktop-xrdp.sh). The
+# running Xvnc reads a copy that tigervncsession made under /tmp at startup, but re-reads it
+# on every connection, so overwriting both files switches the password without restarting
+# the desktop - and the agent running in it. Images without the agent desktop exit 0 early.
+$vncUpdate = @'
+[ -d ~/.vnc ] && command -v vncpasswd >/dev/null || exit 0
+umask 077
+sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' | vncpasswd -f > ~/.vnc/passwd.new && mv ~/.vnc/passwd.new ~/.vnc/passwd || exit 1
+pid=$(pgrep -x -u $(id -u) Xtigervnc) || exit 0
+live=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -A1 -- -PasswordFile | tail -1)
+case $live in /*) cp ~/.vnc/passwd $live ;; esac
+'@
+$Password | & ssh @sshOpts $target ($vncUpdate -replace "`r`n", "`n")
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "The Unix password changed, but the agent desktop's VNC password did not (ssh exited $LASTEXITCODE). RDP to the agent desktop still takes the old one."
+}
+elseif ($Password.Length -gt 8) {
+    Write-Note "the agent desktop only checks the first 8 characters ('$($Password.Substring(0, 8))')"
+}
+
+# The .rdp file from New-AgentVM.ps1 logs in with this entry; keep it in step.
+& cmdkey.exe "/generic:TERMSRV/$IpAddress" "/user:$User" "/pass:$Password" | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Note "saved in Credential Manager as TERMSRV/$IpAddress"
+} else {
+    Write-Warning "cmdkey failed ($LASTEXITCODE); the .rdp file will ask for the new password."
 }
 
 if (-not $NoRecord) {

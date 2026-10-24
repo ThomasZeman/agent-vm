@@ -10,8 +10,10 @@
          Secure Boot off and checkpoints disabled - all required for KVM inside the guest.
       3. Renders the cloud-init NoCloud seed (user-data / meta-data), builds seed.iso with
          oscdimg and attaches it as a DVD drive.
-      4. Starts the VM, waits for a DHCP address, writes a tuned .rdp file and prints the
-         connection lines.
+      4. Starts the VM, waits for a DHCP address, writes a tuned .rdp file, saves the RDP
+         password in Windows Credential Manager so the file opens without a prompt, and
+         prints the connection lines. RDP lands on the agent desktop, a persistent XFCE
+         session that the guest starts at boot (packer/scripts/10-desktop-xrdp.sh).
       5. Offers to hand this host's logins to the guest over SSH once it is up: the GitHub
          token `gh` holds here plus your global git identity, and a long-lived Claude
          subscription token from `claude setup-token`. Each is a separate yes/no, asked
@@ -119,7 +121,8 @@ param(
 
     [string]$SshPublicKeyPath = "$HOME\.ssh\id_ed25519.pub",
 
-    # Generated when omitted; printed once at the end for the RDP login.
+    # Generated when omitted; printed once at the end and saved in Credential Manager.
+    # Letters and digits only, and VNC (the agent desktop) uses just the first 8.
     [string]$RdpPassword,
 
     [string]$OscdimgPath = 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe',
@@ -482,6 +485,16 @@ if ($DeviceSerial -and -not $HostIp) {
 
 if (-not $RdpPassword) { $RdpPassword = New-RandomPassword }
 
+# The password is substituted into single-quoted shell inside runcmd as well as into YAML.
+if ($RdpPassword -notmatch '^[A-Za-z0-9]+$') {
+    throw '-RdpPassword may contain letters and digits only.'
+}
+# VNC authentication is DES over the first 8 characters; the rest is silently ignored by the
+# agent desktop, while the Xorg fallback session (PAM) still checks the whole password.
+if ($RdpPassword.Length -gt 8) {
+    Write-Warning "-RdpPassword is longer than 8 characters. The agent desktop only checks the first 8 ('$($RdpPassword.Substring(0, 8))')."
+}
+
 $sshPublicKey = (Get-Content -LiteralPath $SshPublicKeyPath -Raw).Trim()
 
 Write-Step "Creating dev VM '$Name'"
@@ -625,8 +638,20 @@ runcmd:
   # unattended checkout of a private repo would need a credential baked into the image or
   # written onto this seed ISO, which stays attached and readable inside the guest for the
   # life of the VM. The checkout is an interactive step over SSH instead; this only has to
-  # exist so the tmux session below has a working directory.
+  # exist so the agent's tmux session has a working directory.
   - [sudo, -u, dev, mkdir, -p, /home/dev/app]
+  # The agent desktop (10-desktop-xrdp.sh). Its VNC password is per VM, so it is written
+  # here, and the unit is started by hand because its ConditionPathExists skipped it earlier
+  # in this same boot. From the second boot on, systemd starts it with nothing from here.
+  # The desktop's autostart opens the agent's tmux session inside it, with DISPLAY=:1.
+  #
+  # runcmd runs only on the FIRST boot of an instance. Anything that has to be running after
+  # every boot belongs in systemd or the desktop's autostart, never only here.
+  #
+  # An image from before the agent desktop has no vncpasswd; it gets the old detached tmux
+  # session instead, which has no display.
+  - [sudo, -u, dev, bash, -c, 'if command -v vncpasswd >/dev/null; then umask 077; printf "%s\n" "${RDP_PASSWORD}" | vncpasswd -f > /home/dev/.vnc/passwd; else tmux new -d -s agent -c /home/dev/app; fi']
+  - [bash, -c, 'systemctl start tigervncserver@:1 || true']
   # Emulator only when no phone is assigned to this VM
   - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true']
   # Wait for the emulator to register, but do NOT run `adb tcpip 5555` here. That switches
@@ -635,11 +660,9 @@ runcmd:
   # `adb exec-out screencap` writes a zero-byte file. Host access comes from the
   # adb-bridge.service socat unit baked into the image, which needs nothing done here.
   # `timeout` is not optional. adb wait-for-device blocks FOREVER on an emulator that never
-  # registers, and it is the second-to-last thing in runcmd - so a failed emulator start does
-  # not just cost you the emulator, it wedges cloud-init and the tmux session below never
-  # runs. That failure is silent: the VM answers SSH and looks healthy.
+  # registers, and a wedged runcmd never reaches cloud-init's final stage. That failure is
+  # silent: the VM answers SSH and looks healthy.
   - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20; timeout 180 adb wait-for-device || echo "WARNING: no emulator after 180s - see /tmp/emu.log") || true']
-  - [sudo, -u, dev, tmux, new, -d, -s, agent, -c, /home/dev/app]
 '@
 
 $metaDataTemplate = @'
@@ -861,6 +884,7 @@ $rdpPath = Join-Path $RdpOutputDirectory "$Name.rdp"
 $rdpContent = @"
 full address:s:$ip
 username:s:dev
+prompt for credentials:i:0
 screen mode id:i:2
 smart sizing:i:0
 desktopscalefactor:i:100
@@ -882,13 +906,22 @@ audiomode:i:2
 "@
 Set-Content -LiteralPath $rdpPath -Value $rdpContent -Encoding ASCII
 
+# mstsc looks up TERMSRV/<address> in Credential Manager and sends it with the connection.
+# xrdp hands that password to the agent desktop's VNC check, so the .rdp file opens straight
+# onto the desktop with no dialog. The entry belongs to the current Windows user only; the
+# protection against the rest of the LAN is unchanged, because the guest still checks it.
+& cmdkey.exe "/generic:TERMSRV/$ip" '/user:dev' "/pass:$RdpPassword" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "cmdkey failed ($LASTEXITCODE); the .rdp file will ask for the password."
+}
+
 # ----------------------------------------------------------- connect info ---
 
 Write-Host ''
 Write-Step "'$Name' is up at $ip"
 Write-Host ''
-Write-Host "  SSH + agent : ssh dev@$ip -t tmux attach"
-Write-Host "  RDP         : $rdpPath   (user dev / password $RdpPassword)"
+Write-Host "  SSH + agent : ssh dev@$ip -t tmux attach -t agent"
+Write-Host "  RDP         : $rdpPath   (agent desktop, no prompt; password $RdpPassword in Credential Manager)"
 if ($DeviceSerial) {
     Write-Host "  Device      : $DeviceSerial via the host adb server, tcp:${HostIp}:5037"
     Write-Host "  Screen      : scrcpy -s $DeviceSerial          # on the host, over USB"

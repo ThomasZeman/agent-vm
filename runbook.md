@@ -321,11 +321,18 @@ Get-VMNetworkAdapter -VMName app-foo | Select-Object -ExpandProperty IPAddresses
 # private repo would need a credential on the seed ISO - which stays attached and readable
 # in the guest. Credentials and the checkout are SSH steps after boot (4.2, 4.3).
 sudo -u dev mkdir -p /home/dev/app
+# the agent desktop: per-VM VNC password, then start the unit its condition skipped at boot.
+# Its autostart opens the agent's tmux session inside it, with DISPLAY=:1.
+sudo -u dev bash -c 'umask 077; printf "%s\n" "<RDP password>" | vncpasswd -f > ~/.vnc/passwd'
+systemctl start tigervncserver@:1
 # emulator path only (no DEVICE_SERIAL):
 sudo -u dev bash -lc '~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &'
 sudo -u dev bash -lc 'sleep 20 && adb wait-for-device'
-sudo -u dev tmux new -d -s agent -c /home/dev/app
 ```
+
+runcmd runs on the first boot only. On every later boot, systemd starts the agent desktop
+and with it the `agent` tmux session; the emulator is not restarted (start it by hand with
+`~/bin/emu -snapshot golden`).
 
 Watch it: **[G]** `sudo cloud-init status --wait; sudo tail -f /var/log/cloud-init-output.log`
 
@@ -408,16 +415,22 @@ Verify either way: `claude -p "say ok"`
 
 ```powershell
 Start-VM -Name app-foo
-mstsc .\app-foo.rdp                       # lossless: 32 bpp, no compression, smart sizing off
-ssh dev@<vm-ip> -t tmux attach -t agent
+mstsc .\app-foo.rdp                       # the agent desktop, no prompt; lossless 32 bpp
+ssh dev@<vm-ip> -t tmux attach -t agent   # the same agent session, from a terminal
 adb connect <vm-ip>:5555                  # the guest emulator, visible to host tooling
 adb -s <vm-ip>:5555 exec-out screencap -p > shot.png
 Stop-VM -Name app-foo                     # graceful; VMs are cheap, keep them stopped
 ```
 
-The RDP password is printed once by `New-AgentVM.ps1`. It is not secret in any useful sense —
-the VMs are only reachable on the local switch — so it is short, and it can be read back or
-replaced at any time:
+The `.rdp` file opens the **Agent desktop** session: the persistent XFCE desktop on `:1`
+that the agent's tmux session runs in, so a browser the agent launches is on screen.
+Closing the window leaves all of it running. The session list in the xrdp dialog also
+offers **Xorg**, a separate desktop created for that login.
+
+The RDP password is printed once by `New-AgentVM.ps1` and saved in Windows Credential
+Manager as `TERMSRV/<vm-ip>`, which is why the `.rdp` file opens without a prompt. It still
+protects the VM from the rest of the LAN, but it is short, the agent desktop only checks its
+first 8 characters, and it can be read back or replaced at any time:
 
 ```powershell
 .\Get-AgentVMPassword.ps1 -Name app-foo                    # from the seed ISO; no elevation needed
@@ -426,8 +439,10 @@ replaced at any time:
 .\Set-AgentVMPassword.ps1 -Name app-foo -Password hunter2
 ```
 
-`Set-AgentVMPassword.ps1` records the new value in `C:\Hyper-V\vms\app-foo\rdp-password.txt`,
-which `Get-AgentVMPassword.ps1` prefers over the now-stale ISO.
+`Set-AgentVMPassword.ps1` changes the Unix password, the agent desktop's VNC password and the
+Credential Manager entry, without restarting the desktop. It records the new value in
+`C:\Hyper-V\vms\app-foo\rdp-password.txt`, which `Get-AgentVMPassword.ps1` prefers over the
+now-stale ISO.
 
 **[G]**
 

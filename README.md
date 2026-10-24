@@ -72,11 +72,12 @@ All commands need an elevated PowerShell, apart from `Get-AgentVMPassword.ps1`.
    .\New-AgentVM.ps1 -Name app-foo -Repo you/foo
    ```
 
-3. Attach to the agent's tmux session over SSH, or open the `.rdp` file to see the desktop.
+3. Open the `.rdp` file to see the agent desktop, or attach to the agent's tmux session over SSH. Both show the
+   same session.
 
    ```powershell
-   ssh dev@<vm-ip> -t tmux attach -t agent
    mstsc .\app-foo.rdp
+   ssh dev@<vm-ip> -t tmux attach -t agent
    ```
 
 4. Stop the VM when it is not needed and remove it when the project is done.
@@ -86,11 +87,34 @@ All commands need an elevated PowerShell, apart from `Get-AgentVMPassword.ps1`.
    .\Remove-AgentVM.ps1 -Name app-foo
    ```
 
-The RDP password is printed once when the VM is created. `Get-AgentVMPassword.ps1 -Name app-foo` reads it back, and
-`Set-AgentVMPassword.ps1` replaces it.
+The RDP password is printed once when the VM is created and saved in Windows Credential Manager, so the `.rdp` file
+opens without asking for it. `Get-AgentVMPassword.ps1 -Name app-foo` reads it back, and `Set-AgentVMPassword.ps1`
+replaces it.
 
 By default, images and VMs live under `C:\Hyper-V`. To use another drive, set `AGENTVM_ROOT` once, or pass the same
 `-Root` to every script.
+
+## Watching the agent
+
+The point of the desktop is that I can see what the agent does, including the browser it drives. This needed more
+than xrdp. An xrdp login creates a new desktop for that login only, and anything started before it, such as a tmux
+session opened at boot or over SSH, has no display at all. A headed browser launched from there either fails or
+runs headless, and there is nothing to watch.
+
+Each VM therefore runs one desktop that exists from boot, whether or not anyone is connected:
+
+```mermaid
+flowchart LR
+    systemd(systemd at boot) --> vnc(TigerVNC - XFCE on display :1)
+    vnc --> tmux(tmux session agent - DISPLAY :1)
+    tmux --> browser(browser the agent opens)
+    rdp(.rdp file - xrdp Agent desktop) --> vnc
+    ssh(ssh - tmux attach -t agent) --> tmux
+```
+
+TigerVNC only listens on the VM's loopback interface, and xrdp connects RDP to it. Closing the RDP window leaves the
+desktop, the agent and its browser running. The tmux session is an empty shell when the VM starts; I start the agent
+in it myself.
 
 ## Capacity
 
@@ -119,10 +143,11 @@ more than that created, and only start the ones I am working on.
 
 This is work in progress, and some parts are not finished yet:
 
-- The agent's tmux session is started by cloud-init at boot, before anyone has logged in over RDP. I have not yet
-  verified that a browser the agent launches from there shows up in the RDP session, and I expect that it does not.
 - The RDP password is in plain text on the seed ISO, which the guest can read. The VMs are only reachable on my
-  local network, so I accepted this for now, but it is on my list.
+  local network, so I accepted this for now, but it is on my list. Please note, the agent desktop only checks the
+  first 8 characters of it, which is a limit of VNC authentication.
+- The Android emulator is started by cloud-init, which only runs on the first boot of a VM. After a reboot it has
+  to be started by hand.
 - The golden image has a known console password (`devvm`) for debugging a failed build at the Hyper-V console. SSH
   never accepts it. If you build the image yourself, change it as described in [packer/README.md](packer/README.md).
 - There is no GPU acceleration in the guests. The emulator renders with SwiftShader, which is fine for app UIs and

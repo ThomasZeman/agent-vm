@@ -143,13 +143,16 @@ Run from the repo root, in an elevated shell. About two minutes to a running VM.
    All of that is required for KVM inside the guest.
 4. Renders the cloud-init seed: hostname, the `dev` user with your SSH key and passwordless
    sudo, the RDP password, `~/.env` with the project name and adb settings, and a `runcmd`
-   that creates `~/app`, starts the emulator from the golden snapshot (emulator VMs only)
-   and opens a `tmux` session named `agent`. Builds `seed.iso` and attaches it as a DVD
-   drive, then puts the disk back first in the boot order.
+   that creates `~/app`, writes the agent desktop's VNC password and starts it, and starts
+   the emulator from the golden snapshot (emulator VMs only). The agent desktop opens the
+   `tmux` session named `agent` itself, on this and every later boot; `runcmd` runs only
+   once. Builds `seed.iso` and attaches it as a DVD drive, then puts the disk back first in
+   the boot order.
 5. Starts the VM and polls for a DHCP address.
-6. Writes `<Name>.rdp` with lossless settings and prints the connection lines: SSH with
-   the tmux session, RDP with the password, the emulator's adb address or the phone's
-   serial, a screenshot command, and the Metro URL.
+6. Writes `<Name>.rdp` with lossless settings, saves the RDP password in Windows Credential
+   Manager as `TERMSRV/<address>` so the file opens straight onto the agent desktop, and
+   prints the connection lines: SSH with the tmux session, RDP, the emulator's adb address
+   or the phone's serial, a screenshot command, and the Metro URL.
 7. Once SSH answers and cloud-init has finished, copies `agentvm-setup.sh` to `/tmp` in the
    guest and pipes the accepted credentials to it on stdin (never as arguments):
    `gh auth login --with-token`, `gh auth setup-git`,
@@ -218,7 +221,9 @@ Run from the repo root, in an elevated shell.
 4. Asks the guest to shut down, waits up to `-ShutdownTimeoutSeconds`, then turns it off.
    Removes any checkpoints and waits for the merge. Removes the VM from Hyper-V.
 5. Deletes the project folder, retrying while Hyper-V still holds the disk open, then the
-   `.rdp` file.
+   `.rdp` file and the Credential Manager entries `TERMSRV/<address>` for the address in
+   that file and the address the running VM reported. DHCP may give the address to the
+   next VM, and a stale entry would log in with this one's password.
 
 **Parameters**
 
@@ -289,8 +294,13 @@ Run from the repo root. Elevation only when the VM's address has to be looked up
    alphabet `New-AgentVM.ps1` uses.
 3. Runs `chpasswd` in the guest over SSH with your key and passwordless sudo. The new
    value goes over stdin, never on a command line, and the guest strips the carriage
-   return PowerShell appends to piped text.
-4. Records the password in `rdp-password.txt` in the project folder for
+   return PowerShell appends to piped text and the UTF-8 byte order mark it puts in front
+   when the console's input encoding is UTF-8.
+4. Writes the agent desktop's VNC password (`~/.vnc/passwd`) and the copy the running Xvnc
+   reads, which it re-reads on every connection: the change applies without restarting
+   the desktop or the agent in it. Only the first 8 characters count there.
+5. Updates the Credential Manager entry `TERMSRV/<address>` the `.rdp` file logs in with.
+6. Records the password in `rdp-password.txt` in the project folder for
    `Get-AgentVMPassword.ps1`, unless `-NoRecord`. Prints it.
 
 The seed ISO keeps the original password, but cloud-init applies `chpasswd` only on the

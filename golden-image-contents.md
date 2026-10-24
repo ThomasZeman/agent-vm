@@ -53,14 +53,30 @@ time.
   The point of the desktop is *visual verification* — an eyedropper reading off a compressed
   frame is meaningless.
 
-- `light-locker` purged and `xfce4-screensaver` masked with a `Hidden=true` autostart entry.
-  A lock screen over xrdp is the classic black-screen-on-reconnect bug and is pointless on a
-  disposable VM.
+- **The agent desktop**: one XFCE session on display `:1`, run by TigerVNC
+  (`tigervncserver@:1`, as `dev`, loopback port 5901 only) from boot, whether or not anyone
+  is connected. It exists because an xrdp login creates a new X display per login, so
+  nothing started without one - the agent's tmux session, a browser the agent opens - has a
+  display to draw on. xrdp's first session entry, **Agent desktop** (`[Agent]`, `libvnc.so`),
+  attaches RDP to this display instead; `[Xorg]` remains as the per-login fallback.
+
+  | Piece | What it does |
+  |---|---|
+  | `/etc/tigervnc/vncserver.users` | `:1=dev` |
+  | `~/.vnc/config` | XFCE, 1920x1080 (resized to the RDP client), loopback only, VNC password auth |
+  | `tigervncserver@:1.service.d/10-agent-vm.conf` | `ConditionPathExists=/home/dev/.vnc/passwd`: a no-op until `New-AgentVM.ps1` writes the per-VM password on first boot |
+  | `~/.config/autostart/agent-terminal.desktop` | a maximized terminal running `tmux new-session -A -s agent -c ~/app`, so the agent's session has `DISPLAY=:1` |
+  | `~/.config/autostart/no-blanking.desktop` | `xset s off`; a blank screen hides the agent from whoever is watching |
+
+  The VNC password is not in the image. VNC authentication only uses the first 8 characters.
+- `light-locker` purged, and `xfce4-screensaver` and `gnome-screensaver` masked with
+  `Hidden=true` autostart entries. A lock screen over xrdp is the classic
+  black-screen-on-reconnect bug, and on the agent desktop it would hide the agent.
 - A polkit rule (`/etc/polkit-1/rules.d/45-allow-colord.rules`) that auto-approves colour
   manager actions, so an xrdp session does not sit behind an authentication prompt nobody is
   at the console to dismiss.
 - Shell tools: `tmux`, `git`, `jq`, `unzip`, `zip`, `file`, `htop`, `net-tools`, `iproute2`,
-  `xfce4-terminal`, `dbus-x11`.
+  `xfce4-terminal`, `dbus-x11`, `tigervnc-standalone-server`, `tigervnc-tools`.
 
 ## 3. Language runtimes and build toolchain
 
@@ -215,8 +231,9 @@ fi
 ```
 
 The emulator is windowed by default, and there is no X display for anything started from
-cloud-init, systemd or a plain SSH session — the xrdp X session exists only while someone is
-connected. Windowed with no display it dies immediately on a Qt "no platform plugin could be
+cloud-init, systemd or a plain SSH session — an xrdp Xorg session exists only while someone
+is connected, and the agent desktop on `:1` (section 2) is only inherited by what is started
+inside it. Windowed with no display it dies immediately on a Qt "no platform plugin could be
 initialized" fatal, and whatever launched it waits on an emulator that will never register.
 Deciding from `DISPLAY` means callers do not have to remember: over RDP you get a window,
 everywhere else it runs headless and adb works the same.
@@ -286,11 +303,14 @@ section 3.
 | Service | Port | Purpose |
 |---|---|---|
 | `ssh` | 22 | key-only |
-| `xrdp` | 3389 | XFCE desktop |
+| `xrdp` | 3389 | RDP; attaches to the agent desktop, or creates an Xorg desktop per login |
+| `tigervncserver@:1` | 5901 **on loopback only** | the agent desktop (section 2); skipped until the VM has its VNC password |
 | `adb-bridge` | 5555 **on the LAN address only** | publishes the emulator's loopback adb port; loopback:5555 stays free for the emulator itself |
 
-Not enabled: the emulator itself and Metro. `New-AgentVM.ps1` starts those per VM through
-cloud-init `runcmd`, in a `tmux` session.
+Not enabled: the emulator itself and Metro. `New-AgentVM.ps1` starts the emulator through
+cloud-init `runcmd`, which runs on the **first boot only**; after a reboot it has to be
+started by hand (`~/bin/emu -snapshot golden`). The agent's `tmux` session is started by the
+agent desktop's autostart, on every boot.
 
 ## 9. Home directory layout
 
@@ -304,6 +324,10 @@ cloud-init `runcmd`, in a `tmux` session.
 ~/.claude.json                       MCP server registration
 ~/.vscode/extensions/                Claude Code extension for VS Code
 ~/.xsession                          "xfce4-session"
+~/.vnc/config                        the agent desktop's settings
+~/.vnc/passwd                        its password - per VM, written on first boot, not in the image
+~/.config/autostart/                 agent terminal, no blanking, masked screensavers
+~/app/                               the project checkout; the agent's working directory
 ```
 
 ## 10. What is deliberately *not* in the image
