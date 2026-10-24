@@ -26,8 +26,9 @@
 
 .PARAMETER Password
     The new password. Generated when omitted (8 unambiguous alphanumerics, like New-AgentVM.ps1)
-    and printed at the end. 1 to 64 letters, digits or !#%+,./:=?@^_~- (no spaces or quotes:
-    cmdkey receives it on its command line). The agent desktop only checks the first 8.
+    and printed at the end. 1 to 8 letters, digits or !#%+,./:=?@^_~-. At most 8 because
+    VNC, which guards the agent desktop, ignores everything after the 8th character; no
+    spaces or quotes because cmdkey receives it on its command line.
 
 .PARAMETER IpAddress
     Guest address. Looked up from the VM's network adapter when omitted, which requires an
@@ -59,9 +60,10 @@ param(
     [string]$Name,
 
     # Printable ASCII. chpasswd splits on the first colon, so a colon inside is fine.
-    # cmdkey takes the password as a command-line argument, so a space or a quote would
-    # be split or mangled on its way into Credential Manager.
-    [ValidatePattern('^[A-Za-z0-9!#%+,./:=?@^_~-]{1,64}$')]
+    # At most 8: VNC authentication ignores the rest, so a longer password would only look
+    # stronger. cmdkey takes it as a command-line argument, so a space or a quote would be
+    # split or mangled on its way into Credential Manager.
+    [ValidatePattern('^[A-Za-z0-9!#%+,./:=?@^_~-]{1,8}$')]
     [string]$Password,
 
     [ValidatePattern('^\d{1,3}(\.\d{1,3}){3}$')]
@@ -185,9 +187,6 @@ case $live in /*) cp ~/.vnc/passwd $live ;; esac
 $Password | & ssh @sshOpts $target ($vncUpdate -replace "`r`n", "`n")
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "The Unix password changed, but the agent desktop's VNC password did not (ssh exited $LASTEXITCODE). RDP to the agent desktop still takes the old one."
-}
-elseif ($Password.Length -gt 8) {
-    Write-Note "the agent desktop only checks the first 8 characters ('$($Password.Substring(0, 8))')"
 }
 
 # Credential Manager is the only place the password is kept on the host; it is encrypted

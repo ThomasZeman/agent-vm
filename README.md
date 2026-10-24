@@ -144,8 +144,9 @@ more than that created, and only start the ones I am working on.
 
 This is work in progress, and some parts are not finished yet:
 
-- The agent desktop only checks the first 8 characters of the RDP password, which is a limit of VNC
-  authentication. The VMs are only reachable on my local network, so I accept this.
+- RDP passwords have at most 8 characters, because VNC authentication, which guards the agent desktop, ignores
+  everything after the 8th. The VMs are only reachable on my local network, and I never type the password, so I
+  accept this.
 - The Android emulator is started by cloud-init, which only runs on the first boot of a VM. After a reboot it has
   to be started by hand.
 - There is no GPU acceleration in the guests. The emulator renders with SwiftShader, which is fine for app UIs and

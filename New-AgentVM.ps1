@@ -123,7 +123,7 @@ param(
     [string]$SshPublicKeyPath = "$HOME\.ssh\id_ed25519.pub",
 
     # Generated when omitted; printed once at the end and saved in Credential Manager.
-    # Set over SSH after boot, never on the seed ISO. The agent desktop checks the first 8.
+    # Set over SSH after boot, never on the seed ISO. At most 8 characters (VNC's limit).
     [string]$RdpPassword,
 
     [string]$OscdimgPath = 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe',
@@ -488,8 +488,8 @@ if (-not $RdpPassword) { $RdpPassword = New-RandomPassword }
 
 # Set-AgentVMPassword.ps1 applies it once the VM is up and rejects anything outside this
 # pattern; checked here so that does not happen after the VM has been built.
-if ($RdpPassword -notmatch '^[A-Za-z0-9!#%+,./:=?@^_~-]{1,64}$') {
-    throw '-RdpPassword: 1 to 64 letters, digits or !#%+,./:=?@^_~- (no spaces or quotes).'
+if ($RdpPassword -notmatch '^[A-Za-z0-9!#%+,./:=?@^_~-]{1,8}$') {
+    throw '-RdpPassword: 1 to 8 letters, digits or !#%+,./:=?@^_~- (VNC ignores anything past 8; no spaces or quotes).'
 }
 $setPasswordScript = Join-Path $PSScriptRoot 'Set-AgentVMPassword.ps1'
 if (-not (Test-Path -LiteralPath $setPasswordScript)) {

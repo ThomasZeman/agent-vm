@@ -68,7 +68,8 @@ time.
   | `~/.config/autostart/agent-terminal.desktop` | a maximized terminal running `tmux new-session -A -s agent -c ~/app`, so the agent's session has `DISPLAY=:1` |
   | `~/.config/autostart/no-blanking.desktop` | `xset s off`; a blank screen hides the agent from whoever is watching |
 
-  The VNC password is not in the image. VNC authentication only uses the first 8 characters.
+  The VNC password is not in the image. VNC authentication only uses 8 characters, which is
+  why the RDP password is limited to 8.
 - `light-locker` purged, and `xfce4-screensaver` and `gnome-screensaver` masked with
   `Hidden=true` autostart entries. A lock screen over xrdp is the classic
   black-screen-on-reconnect bug, and on the agent desktop it would hide the agent.

@@ -193,7 +193,7 @@ accounts there.
 | `-VmRoot` | `<Root>\vms` | Where the project folder is created |
 | `-SwitchName` | `DevSwitch` | Hyper-V switch |
 | `-SshPublicKeyPath` | `~\.ssh\id_ed25519.pub` | Key installed on the `dev` account |
-| `-RdpPassword` | generated, 8 chars | Password for `dev`; printed at the end |
+| `-RdpPassword` | generated, 8 chars | Password for `dev`, at most 8 characters; set over SSH after boot, printed at the end |
 | `-OscdimgPath` | the Windows ADK default path | Builds `seed.iso` |
 | `-RdpOutputDirectory` | current directory | Where `<Name>.rdp` is written |
 | `-IpTimeoutSeconds` | 180 | How long to wait for a DHCP address |
@@ -307,8 +307,7 @@ Run from the repo root. Elevation only when the VM's address has to be looked up
 4. Writes the agent desktop's VNC password (`~/.vnc/passwd`). If the desktop is not
    running - on a new VM it cannot start before it has a password - starts it. If it is,
    also overwrites the copy the running Xvnc reads, which it re-reads on every connection:
-   the change applies without restarting the desktop or the agent in it. Only the first 8
-   characters count there.
+   the change applies without restarting the desktop or the agent in it.
 5. Unless `-NoRecord`, saves the password in Credential Manager as `TERMSRV/<address>`,
    which the `.rdp` file logs in with, and `agent-vm:<Name>`, which
    `Get-AgentVMPassword.ps1` reads, and deletes an `rdp-password.txt` left by an earlier
@@ -322,7 +321,7 @@ is set. None is ever written to a file or to the seed ISO.
 | Parameter | Default | Meaning |
 |---|---|---|
 | `-Name` | required | The VM |
-| `-Password` | generated | 1 to 64 letters, digits or `!#%+,./:=?@^_~-`; no spaces or quotes, because `cmdkey` gets it on its command line |
+| `-Password` | generated | 1 to 8 letters, digits or `!#%+,./:=?@^_~-`. At most 8 because VNC ignores the rest; no spaces or quotes, because `cmdkey` gets it on its command line |
 | `-IpAddress` | looked up via Hyper-V | Guest address; skips the lookup and the elevation |
 | `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
 | `-VmRoot` | `<Root>\vms` | Where the project folder is |

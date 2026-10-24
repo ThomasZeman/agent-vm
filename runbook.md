@@ -334,7 +334,7 @@ The agent desktop does not start yet: it has no password. Once cloud-init has fi
 
 ```bash
 chpasswd                                        # dev:<password>, from stdin
-vncpasswd -f > ~/.vnc/passwd                    # the agent desktop's password, first 8 chars
+vncpasswd -f > ~/.vnc/passwd                    # the agent desktop's password (max 8 chars)
 sudo systemctl start tigervncserver@:1          # from now on systemd starts it at every boot
 ```
 
@@ -437,8 +437,8 @@ offers **Xorg**, a separate desktop created for that login.
 The RDP password is printed once by `New-AgentVM.ps1` and saved in Windows Credential
 Manager as `TERMSRV/<vm-ip>`, which is why the `.rdp` file opens without a prompt, and as
 `agent-vm:<name>`. It is in no file, on the host or on the seed ISO. It still protects the
-VM from the rest of the LAN, but it is short, the agent desktop only checks its first 8
-characters, and it can be read back or replaced at any time:
+VM from the rest of the LAN, but it is short - at most 8 characters, because VNC ignores
+anything longer - and it can be read back or replaced at any time:
 
 ```powershell
 .\Get-AgentVMPassword.ps1 -Name app-foo                    # from Credential Manager; no elevation needed
