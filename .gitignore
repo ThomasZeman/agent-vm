@@ -1,0 +1,16 @@
+# packer - Packer build artifacts and downloaded ISOs
+packer/packer_cache/
+packer/manifest.json
+packer/manifest.json.lock
+packer/crash.log
+packer/packer.log
+# var files can carry the real password hash / key paths
+packer/*.pkrvars.hcl
+
+# Generated per-VM files. New-DevVM.ps1 writes <name>.rdp into $PWD, which is wherever it
+# was invoked from - the repo root, packer/, anywhere - so this is not path-anchored.
+*.rdp
+
+# VM images anywhere in the tree
+*.iso
+*.vhdx

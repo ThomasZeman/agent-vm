@@ -3,7 +3,7 @@
     Removes a per-project React Native development VM created by New-DevVM.ps1.
 
 .DESCRIPTION
-    The companion to New-DevVM.ps1 (section 8.2 of scratch/linux-vm-on-windows.md):
+    The companion to New-DevVM.ps1 (section 8.2 of linux-vm-on-windows.md):
 
       1. Shuts the VM down - gracefully first, then forced if it does not stop in time.
       2. Removes the VM definition from Hyper-V.

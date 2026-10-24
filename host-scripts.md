@@ -11,11 +11,11 @@ what is inside the image see `golden-image-contents.md`; for the Packer build it
 
 | Script | Lives in | Does | Needs elevation |
 |---|---|---|---|
-| `packer\Build-GoldenImage.ps1` | `scratch\packer\` | Builds the golden VHDX with Packer, then compacts and write-protects it | yes |
-| `New-DevVM.ps1` | `scratch\` | Clones a project VM from the golden image, boots it, writes its `.rdp` file, optionally clones the repo | yes |
-| `Remove-DevVM.ps1` | `scratch\` | Stops and deletes a project VM and its files | yes |
-| `Get-DevVMPassword.ps1` | `scratch\` | Prints a VM's RDP password | no |
-| `Set-DevVMPassword.ps1` | `scratch\` | Sets a new RDP password over SSH | only for the address lookup |
+| `packer\Build-GoldenImage.ps1` | `packer\` | Builds the golden VHDX with Packer, then compacts and write-protects it | yes |
+| `New-DevVM.ps1` | repo root | Clones a project VM from the golden image, boots it, writes its `.rdp` file, optionally clones the repo | yes |
+| `Remove-DevVM.ps1` | repo root | Stops and deletes a project VM and its files | yes |
+| `Get-DevVMPassword.ps1` | repo root | Prints a VM's RDP password | no |
+| `Set-DevVMPassword.ps1` | repo root | Sets a new RDP password over SSH | only for the address lookup |
 
 ---
 
@@ -63,7 +63,7 @@ so they are short and treated as convenience, not secrets.
 
 ## `Build-GoldenImage.ps1`
 
-Run from `scratch\packer\`, in an elevated shell. 30 to 50 minutes.
+Run from `packer\`, in an elevated shell. 30 to 50 minutes.
 
 ```powershell
 .\Build-GoldenImage.ps1
@@ -119,7 +119,7 @@ until its last child is removed.
 
 ## `New-DevVM.ps1`
 
-Run from `scratch\`, in an elevated shell. About two minutes to a running VM.
+Run from the repo root, in an elevated shell. About two minutes to a running VM.
 
 ```powershell
 .\New-DevVM.ps1 -Name app-foo -Repo you/foo                       # offers your GitHub + Claude logins, then clones
@@ -199,7 +199,7 @@ switch is bound to the right NIC.
 
 ## `Remove-DevVM.ps1`
 
-Run from `scratch\`, in an elevated shell.
+Run from the repo root, in an elevated shell.
 
 ```powershell
 .\Remove-DevVM.ps1 -Name app-foo               # asks first
@@ -240,7 +240,7 @@ that exists nowhere else.
 
 ## `Get-DevVMPassword.ps1`
 
-Run from `scratch\`. No elevation.
+Run from the repo root. No elevation.
 
 ```powershell
 .\Get-DevVMPassword.ps1 -Name app-foo
@@ -272,7 +272,7 @@ forward.
 
 ## `Set-DevVMPassword.ps1`
 
-Run from `scratch\`. Elevation only when the VM's address has to be looked up.
+Run from the repo root. Elevation only when the VM's address has to be looked up.
 
 ```powershell
 .\Set-DevVMPassword.ps1 -Name app-foo                                   # generates one, prints it
@@ -320,7 +320,7 @@ failure case.
 First time on a host:
 
 ```powershell
-cd scratch\packer
+cd packer
 .\Build-GoldenImage.ps1
 cd ..
 .\New-DevVM.ps1 -Name smoke            # verify the image (runbook §3)
@@ -344,7 +344,7 @@ Forgot the password, or want a different one:
 Toolchain upgrade, without touching running VMs:
 
 ```powershell
-cd scratch\packer
+cd packer
 .\Build-GoldenImage.ps1 -GoldenPath C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
 cd ..
 .\New-DevVM.ps1 -Name app-foo2 -Repo you/foo -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx

@@ -1,0 +1,13 @@
+# This repo is developed on Windows with core.autocrlf=true, which rewrites LF to CRLF in the
+# working copy on checkout. That is fine for everything the Windows host runs, and wrong for
+# anything that ends up inside a Linux guest: Packer's shell provisioner uploads the working
+# copy as-is, and bash then fails on the trailing \r with errors that name a line number and
+# a stray carriage return rather than the real cause.
+#
+# The files below are only ever executed or parsed in the guest, so pin them to LF.
+
+# Provisioner scripts run by Packer inside the build VM.
+*.sh text eol=lf
+
+# cloud-init seed. A \r on the end of a runcmd entry is part of the command.
+packer/http/*.pkrtpl.hcl text eol=lf

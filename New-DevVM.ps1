@@ -3,7 +3,7 @@
     Creates a per-project React Native development VM on Hyper-V from the golden Ubuntu image.
 
 .DESCRIPTION
-    Implements section 8.2 of scratch/linux-vm-on-windows.md:
+    Implements section 8.2 of linux-vm-on-windows.md:
 
       1. Creates a differencing disk against the immutable golden VHDX (thin clone, seconds).
       2. Creates a Generation 2 VM with nested virtualization enabled, static memory,
