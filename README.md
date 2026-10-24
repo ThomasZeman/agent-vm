@@ -109,6 +109,8 @@ the repo root. Run all of them from an elevated PowerShell. The steps below star
    cd ..
    ```
 
+   ![Packer building the golden image: the Android SDK step finishing and the emulator snapshot starting](docs/images/packer-running.png)
+
 2. From the repo root, create a VM for a project. Before it builds anything, it asks whether to hand over my GitHub
    and Claude logins. About two minutes later the VM is running, and the script has written `app-foo.rdp` into
    the current directory.
