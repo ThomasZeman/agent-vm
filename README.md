@@ -1,5 +1,12 @@
 # agent-vm
 
+<details>
+<summary>✦ Written with AI assistance</summary>
+
+The setup, the design decisions and the testing on my own machine are my own. An AI assistant (Claude Code) helped
+me with research, writing the scripts, and drafting and editing the text.
+</details>
+
 Disposable Ubuntu VMs on a Windows 11 Hyper-V host, built for running Claude Code agent loops in isolation while
 I can still watch what the agent is doing over Remote Desktop.
 
@@ -90,8 +97,11 @@ shell, or pass the same `-Root` to every script:
 
 ## Getting started
 
-1. Build the golden image. It runs unattended and takes 30 to 50 minutes, most of it the Android system image
-   download and the first boot of the emulator.
+The scripts live in two places: `Build-GoldenImage.ps1` is in the `packer\` directory, and everything else is in
+the repo root. Run all of them from an elevated PowerShell. The steps below start in the repo root.
+
+1. Change into `packer\` and build the golden image there. It runs unattended and takes 30 to 50 minutes, most of
+   it the Android system image download and the first boot of the emulator. Then go back to the repo root.
 
    ```powershell
    cd packer
@@ -99,9 +109,9 @@ shell, or pass the same `-Root` to every script:
    cd ..
    ```
 
-2. Create a VM for a project. Before it builds anything, it asks whether to hand over my GitHub and Claude logins.
-   About two minutes later the VM is running, and the script has written `app-foo.rdp` into the current
-   directory.
+2. From the repo root, create a VM for a project. Before it builds anything, it asks whether to hand over my GitHub
+   and Claude logins. About two minutes later the VM is running, and the script has written `app-foo.rdp` into
+   the current directory.
 
    ```powershell
    .\New-AgentVM.ps1 -Name app-foo -Repo you/foo

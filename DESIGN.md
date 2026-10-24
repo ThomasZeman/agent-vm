@@ -1,5 +1,12 @@
 # agent-vm: design
 
+<details>
+<summary>✦ Written with AI assistance</summary>
+
+The setup, the design decisions and the testing on my own machine are my own. An AI assistant (Claude Code) helped
+me with research, writing the scripts, and drafting and editing the text.
+</details>
+
 This document describes how agent-vm works and why it is built the way it is: the host, the golden image and how it
 is built, what is inside it, how a VM is created, the desktop the agent runs on, logins and passwords, the Android
 emulator, and the things that fail in ways that do not look like their cause. How to use the scripts is in the
