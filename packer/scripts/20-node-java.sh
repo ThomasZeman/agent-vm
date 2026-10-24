@@ -52,11 +52,17 @@ sed -i 's/^sdkman_auto_answer=.*/sdkman_auto_answer=true/' "$SDKMAN_DIR/etc/conf
 echo "==> JDKs (${JDK_MAJORS}; vendor ${JDK_VENDOR})"
 # SDKMAN identifiers carry the full version - "21.0.9-tem", not "21" - so pinning them here
 # would go stale the next time the vendor ships a patch. Resolve the newest identifier per
-# major out of `sdk list java`, whose rows run newest-first within a vendor.
+# major out of `sdk list java`.
+#
+# Identifiers may carry a "+build" suffix ("21.0.12+1.1-tem"), so the pattern takes "+" as
+# well as "." between the numbers. Matching dots only, grep -o pulled "1.1-tem" out of that
+# one, which starts with no major at all, and the build failed on "no tem build of Java 21"
+# while 17.0.20-tem resolved fine. Sorted by version rather than trusting the listing order.
 latest_jdk() {
     sdk list java 2>/dev/null \
-        | grep -oE "[0-9]+(\.[0-9]+)+-${JDK_VENDOR}\b" \
+        | grep -oE "[0-9]+([.+][0-9]+)*-${JDK_VENDOR}\b" \
         | grep -E "^${1}\." \
+        | sort -Vr \
         | head -n1
 }
 
