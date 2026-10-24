@@ -124,11 +124,15 @@ allow dynamic memory together with nested virtualization.
 
 | VM | vCPU | RAM |
 | --- | --- | --- |
-| With emulator (default) | 4 | 10GB |
+| Android emulator available (default) | 4 | 10GB |
 | With a physical phone instead (`-DeviceSerial`) | 4 | 6GB |
 
 On my 64GB host, this works out at about five VMs running at the same time after leaving room for Windows. I keep
 more than that created, and only start the ones I am working on.
+
+The emulator is not running by default. The agent starts it when a task needs it, and it opens as a window on the
+agent desktop. On my host the VM's memory use went from 0.8GB to 5.8GB when it started. `New-AgentVM.ps1
+-StartEmulator` starts it with the desktop at every boot instead, for projects that need it all the time.
 
 ## Documentation
 
@@ -147,8 +151,8 @@ This is work in progress, and some parts are not finished yet:
 - RDP passwords have at most 8 characters, because VNC authentication, which guards the agent desktop, ignores
   everything after the 8th. The VMs are only reachable on my local network, and I never type the password, so I
   accept this.
-- The Android emulator is started by cloud-init, which only runs on the first boot of a VM. After a reboot it has
-  to be started by hand.
+- The emulator shows an info dialog about running under nested virtualization each time it starts. It does not
+  block adb, but it stays on the desktop until someone closes it.
 - There is no GPU acceleration in the guests. The emulator renders with SwiftShader, which is fine for app UIs and
   too slow for games.
 

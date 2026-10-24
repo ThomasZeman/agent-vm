@@ -236,8 +236,13 @@ cloud-init, systemd or a plain SSH session — an xrdp Xorg session exists only 
 is connected, and the agent desktop on `:1` (section 2) is only inherited by what is started
 inside it. Windowed with no display it dies immediately on a Qt "no platform plugin could be
 initialized" fatal, and whatever launched it waits on an emulator that will never register.
-Deciding from `DISPLAY` means callers do not have to remember: over RDP you get a window,
-everywhere else it runs headless and adb works the same.
+Deciding from `DISPLAY` means callers do not have to remember: on the agent desktop you get a
+window, everywhere else it runs headless and adb works the same.
+
+It also loads `/etc/profile.d/android.sh` when `emulator` is not on the `PATH`. Only login
+shells read that file, and a command given to `tmux new-window`, a desktop autostart entry
+and a plain `ssh vm cmd` are none of them: without this they fail with
+`exec: emulator: not found`.
 
 **`adb-bridge.service`** (systemd, enabled, runs as `dev`) republishes the emulator's adb port
 on the LAN interface, via `/usr/local/bin/adb-bridge`:
@@ -308,10 +313,12 @@ section 3.
 | `tigervncserver@:1` | 5901 **on loopback only** | the agent desktop (section 2); skipped until the VM has its VNC password |
 | `adb-bridge` | 5555 **on the LAN address only** | publishes the emulator's loopback adb port; loopback:5555 stays free for the emulator itself |
 
-Not enabled: the emulator itself and Metro. `New-AgentVM.ps1` starts the emulator through
-cloud-init `runcmd`, which runs on the **first boot only**; after a reboot it has to be
-started by hand (`~/bin/emu -snapshot golden`). The agent's `tmux` session is started by the
-agent desktop's autostart, on every boot.
+Not enabled: the emulator itself and Metro. The emulator holds 2 to 4 GB while it runs, so
+by default nothing starts it: the agent does when a task needs it (`~/bin/emu -snapshot
+golden`, see `~/.claude/CLAUDE.md`), and from the agent's session it opens as a window on
+the agent desktop. A VM created with `New-AgentVM.ps1 -StartEmulator` gets an autostart
+entry instead, and the emulator comes up with the desktop at every boot. The agent's `tmux`
+session is started by the agent desktop's autostart, on every boot.
 
 ## 9. Home directory layout
 

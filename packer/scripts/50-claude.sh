@@ -49,7 +49,10 @@ This is a disposable Ubuntu VM dedicated to one React Native project. The repo i
 
 ## Emulator
 
-- Start it warm: \`~/bin/emu -snapshot golden\` (a few seconds).
+- It is not running unless this VM was created with -StartEmulator; \`adb devices\` tells.
+  Start it when the task needs it, warm, in its own tmux window so it outlives your
+  command: \`tmux new-window -d -n emu '~/bin/emu -snapshot golden'\` (a few seconds). It
+  opens as a window on the desktop the human is watching.
 - Cold boot only if the snapshot is broken: \`~/bin/emu -no-snapshot-load\` (60-90 s).
 - Check it is up: \`adb devices\` should list \`emulator-5554\` as \`device\`.
 - If \`~/.env\` sets \`ADB_SERVER_SOCKET\`, this VM is driving a **physical phone on the

@@ -65,6 +65,13 @@
     adb serial of a physical phone assigned to this project (section 13). When set, the guest
     skips the emulator and pins itself to that device through the host's adb server.
 
+.PARAMETER StartEmulator
+    Start the Android emulator with the agent desktop, on every boot, as a window on that
+    desktop. Without it the emulator is not running, and the agent (or you) starts it when a
+    task needs it: `~/bin/emu -snapshot golden`, a few seconds from the golden snapshot. It
+    holds 2 to 4 GB of the VM's RAM while it runs, which a web-only project does not need.
+    Not with -DeviceSerial.
+
 .PARAMETER Root
     Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -GoldenVhdx and
     -VmRoot derive from it; set AGENTVM_ROOT once (machine scope) to move everything to another
@@ -109,6 +116,8 @@ param(
     [int]$Cpus = 4,
 
     [string]$DeviceSerial = '',
+
+    [switch]$StartEmulator,
 
     [string]$HostIp,
 
@@ -484,6 +493,10 @@ if ($DeviceSerial -and -not $HostIp) {
     throw '-DeviceSerial requires -HostIp: the guest talks to the adb server running on the host (section 13.1).'
 }
 
+if ($DeviceSerial -and $StartEmulator) {
+    throw '-StartEmulator and -DeviceSerial exclude each other: a phone-backed VM runs no emulator.'
+}
+
 if (-not $RdpPassword) { $RdpPassword = New-RandomPassword }
 
 # Set-AgentVMPassword.ps1 applies it once the VM is up and rejects anything outside this
@@ -502,8 +515,10 @@ Write-Step "Creating dev VM '$Name'"
 Write-Note ("memory {0} GB, {1} vCPU, switch {2}" -f ($Memory / 1GB), $Cpus, $SwitchName)
 if ($DeviceSerial) {
     Write-Note "render target: physical device $DeviceSerial via adb server tcp:${HostIp}:5037"
+} elseif ($StartEmulator) {
+    Write-Note 'render target: AVD emulator, started with the agent desktop at every boot'
 } else {
-    Write-Note 'render target: AVD emulator, resumed from the golden snapshot'
+    Write-Note 'render target: AVD emulator, started on demand (~/bin/emu -snapshot golden)'
 }
 
 # ------------------------------------------------------ host credentials ---
@@ -622,6 +637,7 @@ write_files:
       # Physical device mode (section 12). An empty ANDROID_SERIAL means the emulator.
       ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET}
       ANDROID_SERIAL=${DEVICE_SERIAL}
+${EMULATOR_AUTOSTART}
 runcmd:
   # Every entry is a YAML *sequence* (an argv list), not a bare string, and each shell
   # fragment is single-quoted. This is not style. A plain YAML scalar that contains ": "
@@ -649,17 +665,28 @@ runcmd:
   # An image from before the agent desktop has no vncpasswd; it gets the old detached tmux
   # session instead, which has no display.
   - [sudo, -u, dev, bash, -c, 'command -v vncpasswd >/dev/null || tmux new -d -s agent -c /home/dev/app']
-  # Emulator only when no phone is assigned to this VM
-  - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true']
-  # Wait for the emulator to register, but do NOT run `adb tcpip 5555` here. That switches
-  # the guest Android's adbd to TCP mode behind qemu's NAT - unreachable from the host
-  # either way - and knocks the emulator off this VM's own adb server, after which a local
-  # `adb exec-out screencap` writes a zero-byte file. Host access comes from the
-  # adb-bridge.service socat unit baked into the image, which needs nothing done here.
-  # `timeout` is not optional. adb wait-for-device blocks FOREVER on an emulator that never
-  # registers, and a wedged runcmd never reaches cloud-init's final stage. That failure is
-  # silent: the VM answers SSH and looks healthy.
-  - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20; timeout 180 adb wait-for-device || echo "WARNING: no emulator after 180s - see /tmp/emu.log") || true']
+  # No emulator here. It used to start from runcmd, which only ever happens on the first
+  # boot, and headless, since nothing here has a display. With -StartEmulator it is in the
+  # agent desktop's autostart instead (write_files above): every boot, as a window.
+  # Otherwise the agent starts it when a task needs it.
+'@
+
+# -StartEmulator: an autostart entry for the agent desktop, so the emulator comes up with it
+# at every boot, with DISPLAY=:1 and therefore as a window (~/bin/emu only goes headless when
+# DISPLAY is unset). `defer` writes it after the users stage. Nothing here runs adb: host
+# access is adb-bridge.service, and `adb tcpip 5555` would knock the emulator off this VM's
+# own adb server (golden-image-contents.md, section 5).
+$emulatorAutostart = @'
+  - path: /home/dev/.config/autostart/android-emulator.desktop
+    owner: dev:dev
+    permissions: '0644'
+    defer: true
+    content: |
+      [Desktop Entry]
+      Type=Application
+      Name=Android emulator
+      Comment=Written by New-AgentVM.ps1 -StartEmulator
+      Exec=bash -lc "unset ADB_SERVER_SOCKET; exec ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1"
 '@
 
 $metaDataTemplate = @'
@@ -817,6 +844,7 @@ esac
 # the local default (section 13.1).
 $adbServerSocket = if ($DeviceSerial) { "tcp:${HostIp}:5037" } else { '' }
 $substitutions = [ordered]@{
+    '${EMULATOR_AUTOSTART}' = $(if ($StartEmulator) { $emulatorAutostart } else { '' })
     '${NAME}'              = $Name
     '${SSH_PUBKEY}'        = $sshPublicKey
     '${ADB_SERVER_SOCKET}' = $adbServerSocket
@@ -937,7 +965,10 @@ if ($DeviceSerial) {
     Write-Host "  Device      : $DeviceSerial via the host adb server, tcp:${HostIp}:5037"
     Write-Host "  Screen      : scrcpy -s $DeviceSerial          # on the host, over USB"
 } else {
-    Write-Host "  Emulator    : adb connect ${ip}:5555            # on the host"
+    if (-not $StartEmulator) {
+        Write-Host "  Emulator    : not running; in the guest: ~/bin/emu -snapshot golden   (agent session, a few seconds)"
+    }
+    Write-Host "  Emulator adb: adb connect ${ip}:5555            # on the host, once it runs"
     # NOT `exec-out screencap -p > screen.png`. PowerShell's `>` is a text redirect: it
     # decodes the PNG bytes as text and re-encodes them as UTF-8 with a BOM, and the file
     # that lands is not a PNG. screencap-to-file plus pull is byte-exact in every shell.
@@ -1004,8 +1035,8 @@ else {
 }
 
 Write-Note "Lost the password? .\Get-AgentVMPassword.ps1 -Name $Name   (or set one: .\Set-AgentVMPassword.ps1)"
-if (-not $DeviceSerial) {
-    Write-Note 'The emulator is still resuming from the golden snapshot; give it a few seconds.'
+if ($StartEmulator) {
+    Write-Note 'The emulator is resuming from the golden snapshot on the agent desktop; give it a few seconds.'
 }
 
 if ($handoffClaude -and $handoffOk) {

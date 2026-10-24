@@ -145,9 +145,10 @@ Run from the repo root, in an elevated shell. About two minutes to a running VM.
    memory, nested virtualization, MAC spoofing, Secure Boot off and checkpoints disabled.
    All of that is required for KVM inside the guest.
 4. Renders the cloud-init seed: hostname, the `dev` user with your SSH key and passwordless
-   sudo, `~/.env` with the project name and adb settings, and a `runcmd` that creates
-   `~/app` and starts the emulator from the golden snapshot (emulator VMs only); `runcmd`
-   runs only once. No password: the seed stays attached and readable inside the guest.
+   sudo, `~/.env` with the project name and adb settings, a `runcmd` that creates `~/app`,
+   and with `-StartEmulator` an autostart entry that starts the emulator with the agent
+   desktop at every boot. Without it the emulator is not running until something starts it.
+   No password: the seed stays attached and readable inside the guest.
    Builds `seed.iso` and attaches it as a DVD drive, then puts the disk back first in the
    boot order.
 5. Starts the VM, polls for a DHCP address, and writes `<Name>.rdp` with lossless settings.
@@ -187,6 +188,7 @@ accounts there.
 | `-Memory` | 10 GB, or 6 GB with `-DeviceSerial` | Static RAM |
 | `-Cpus` | 4 | Virtual processors |
 | `-DeviceSerial` | none | adb serial of a phone; skips the emulator |
+| `-StartEmulator` | off | Start the emulator with the agent desktop at every boot, as a window. Off: not running until started (`~/bin/emu -snapshot golden`), which saves 2 to 4 GB for web-only work. Not with `-DeviceSerial` |
 | `-HostIp` | none | Host address on the switch subnet; required with `-DeviceSerial` |
 | `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-GoldenVhdx` and `-VmRoot` |
 | `-GoldenVhdx` | `<Root>\golden\golden-ubuntu-rn.vhdx` | Parent image |

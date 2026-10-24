@@ -286,13 +286,11 @@ runcmd:
   # GitHub, so an unattended clone of a private repo needs a credential on the seed ISO,
   # which stays attached to the VM and readable from inside it.
   - sudo -u dev mkdir -p /home/dev/app
-  # Emulator only when no phone is assigned to this VM
-  - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true'
-  - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20 && adb wait-for-device) || true'
-  # No tmux here: the agent desktop opens the `agent` session itself, with a display.
+  # No tmux and no emulator here: runcmd only runs on the first boot. The agent desktop
+  # opens the `agent` session itself, with a display, at every boot.
 ```
 
-`New-AgentVM.ps1` takes an optional `-DeviceSerial` parameter; when set, the VM is created with less RAM (6 GB) and the emulator is skipped.
+The emulator is not started by default; the agent starts it when a task needs it, and it opens as a window on the agent desktop. `New-AgentVM.ps1 -StartEmulator` adds an autostart entry to `write_files` instead, so it comes up with the desktop at every boot. `-DeviceSerial` creates the VM with less RAM (6 GB) and no emulator at all.
 
 ### 8.4 Keeping running VMs in sync (optional)
 
@@ -302,7 +300,7 @@ Keep an Ansible inventory of live VMs (`app-foo ansible_host=192.168.1.51`, …)
 
 ## 9. Daily workflow
 
-1. `.\New-AgentVM.ps1 -Name app-bar -Repo …` — VM up in ~2 minutes, emulator already running from snapshot.
+1. `.\New-AgentVM.ps1 -Name app-bar -Repo … -StartEmulator` — VM up in ~2 minutes, emulator running from the snapshot as a window on the agent desktop. Without `-StartEmulator` the agent starts it when it needs it.
 2. Double-click `app-bar.rdp` (no prompt; the password is in Credential Manager), or `ssh dev@<ip> -t tmux attach -t agent` → start Claude Code on the task in the `agent` session.
 3. Claude builds, reloads Metro, screenshots, inspects, taps — via the MCP server — and saves PNGs to `~/shots/`.
 4. When you want to check: double-click `app-bar.rdp`, look at the emulator window at 1:1, use the RN inspector for numbers; open a PNG at 100 % and eyedropper anything where the exact hex matters.

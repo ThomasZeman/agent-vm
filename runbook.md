@@ -321,13 +321,21 @@ Get-VMNetworkAdapter -VMName app-foo | Select-Object -ExpandProperty IPAddresses
 # and the seed ISO stays attached and readable in the guest. The password, credentials and
 # the checkout are SSH steps after boot (4.2, 4.3, and the password step below).
 sudo -u dev mkdir -p /home/dev/app
-# emulator path only (no DEVICE_SERIAL):
-sudo -u dev bash -lc '~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &'
-sudo -u dev bash -lc 'sleep 20 && adb wait-for-device'
+# with -StartEmulator only, from write_files: an autostart entry for the agent desktop
+# ~/.config/autostart/android-emulator.desktop  ->  ~/bin/emu -snapshot golden
 ```
 
-runcmd runs on the first boot only; the emulator is not restarted on later boots (start it
-by hand with `~/bin/emu -snapshot golden`).
+runcmd runs on the first boot only, which is why it starts nothing that has to be running
+later. The emulator is **not running by default**. Start it when a task needs it, from the
+agent's tmux session, so it opens as a window on the agent desktop:
+
+```bash
+tmux new-window -d -n emu '~/bin/emu -snapshot golden'   # a few seconds, from the golden snapshot
+adb devices                                              # emulator-5554  device
+adb emu kill                                             # stop it again; frees 2-4 GB
+```
+
+With `-StartEmulator`, the agent desktop starts it at every boot instead.
 
 The agent desktop does not start yet: it has no password. Once cloud-init has finished,
 `New-AgentVM.ps1` runs `Set-AgentVMPassword.ps1` **[H]**, which over SSH does:

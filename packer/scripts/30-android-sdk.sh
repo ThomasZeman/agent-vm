@@ -326,11 +326,20 @@ cat > "$HOME/bin/emu" <<EMU
 # boot that was an \`adb wait-for-device\` blocking cloud-init forever, which also meant the
 # tmux session on the next runcmd line never started.
 #
-# So decide from DISPLAY rather than requiring every caller to remember -no-window. Over RDP
-# DISPLAY is set and you get a window; everywhere else it runs headless and adb still works.
+# So decide from DISPLAY rather than requiring every caller to remember -no-window. On the
+# agent desktop DISPLAY is set and you get a window; everywhere else it runs headless and adb
+# still works.
 args=()
 if [ -z "\${DISPLAY:-}" ]; then
     args+=(-no-window)
+fi
+
+# The SDK's PATH comes from /etc/profile.d/android.sh, which only login shells read. A
+# command given to \`tmux new-window\`, a desktop autostart entry and a plain \`ssh vm cmd\`
+# are none of them, and fail with "exec: emulator: not found". Load it here, so every
+# caller works without remembering \`bash -l\`.
+if ! command -v emulator >/dev/null; then
+    . /etc/profile.d/android.sh
 fi
 
 exec emulator -avd ${AVD_NAME} \\
