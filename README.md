@@ -119,6 +119,8 @@ the repo root. Run all of them from an elevated PowerShell. The steps below star
    .\New-AgentVM.ps1 -Name app-foo -Repo you/foo
    ```
 
+   ![New-AgentVM.ps1 handing over the logins, creating the VM and printing how to reach it](docs/images/creating-vm.png)
+
 3. Open the `.rdp` file to see the agent desktop, or attach to the agent's tmux session over SSH. Both show the
    same session.
 
