@@ -20,7 +20,7 @@ disagree, the script wins.
 | Virtual disk | 60 GB dynamic VHDX, Gen 2, Secure Boot off |
 | User | `dev`, passwordless sudo via `/etc/sudoers.d/90-dev` |
 | SSH | key-only (`allow-pw: false`); the build key is `~/.ssh/id_ed25519.pub` from the host |
-| Console password | `devvm` by default — only reachable at the Hyper-V console, never over SSH |
+| Console password | `devvm` by default, **during the build only** (Hyper-V console, never SSH); locked by `90-cleanup.sh`, so the image has no usable password |
 | Networking | DHCP, matching both `en*` and `eth*` (Hyper-V's VMBus NIC stays `eth0`) |
 
 Base packages from the autoinstall: `openssh-server`, `curl`, `ca-certificates`, `unzip`,
@@ -340,6 +340,7 @@ all — anything machine-specific left behind is duplicated into every child VM.
 | `/etc/machine-id` **truncated, not deleted** | systemd regenerates a unique id into an existing empty file; two VMs sharing one share a DHCP DUID and fight over a lease |
 | `/var/lib/dbus/machine-id` → symlink | follows the above |
 | `/etc/ssh/ssh_host_*` | cloud-init regenerates them; otherwise every VM has one identity and clients raise host-key warnings |
+| `dev`'s password **locked** (`passwd -l`) | the build password `devvm` is published; unlocked, every VM would have it, with passwordless sudo behind RDP. Each VM gets its own from `Set-AgentVMPassword.ps1`. Key login and sudo do not need it |
 | cloud-init state (`cloud-init clean --logs --seed`, `/var/lib/cloud/instance*`) | without this cloud-init believes it has already run and ignores the per-VM seed ISO — no `dev` user, no SSH key, no `~/app` |
 | apt lists and caches | size |
 | all of `/var/log`, journal, `/var/tmp`, bash history | size and hygiene |

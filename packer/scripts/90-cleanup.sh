@@ -48,6 +48,17 @@ sudo ln -sf /etc/machine-id /var/lib/dbus/machine-id
 # the same identity and set off host-key warnings on the client.
 sudo rm -f /etc/ssh/ssh_host_*
 
+echo "==> locking the build password"
+# "devvm" (dev_password_hash in ubuntu-rn.pkr.hcl) exists so a hung build can be debugged at
+# the Hyper-V console. It is published with this repository, so it must not survive into the
+# image: every VM cloned from it would carry dev/devvm with passwordless sudo, reachable
+# over RDP. Locking prefixes the hash with "!", so no password matches. Nothing after this
+# needs it: Packer is connected with the SSH key, which sshd still accepts for a locked
+# account because Ubuntu runs it with UsePAM yes, and sudo is NOPASSWD. Each VM gets its own
+# password from Set-AgentVMPassword.ps1, and chpasswd replaces the locked hash.
+sudo passwd -l dev
+sudo passwd -S dev | grep -q '^dev L ' || { echo "dev's password is not locked" >&2; exit 1; }
+
 echo "==> logs, history, temp"
 sudo find /var/log -type f -exec truncate -s 0 {} \;
 sudo rm -rf /var/log/journal/* /var/tmp/* /tmp/emulator-build.log

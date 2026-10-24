@@ -29,10 +29,13 @@ what is inside the image see `golden-image-contents.md`; for the Packer build it
 <Root>\golden\build\                    Packer's scratch output; deleted after a build
 <Root>\vms\<Name>\disk.vhdx             differencing disk, parent = the golden image
 <Root>\vms\<Name>\seed.iso              cloud-init seed; stays attached for the VM's life
-<Root>\vms\<Name>\rdp-password.txt      only after Set-AgentVMPassword.ps1
 <Root>\vms\<Name>\Virtual Machines\     Hyper-V's own config
 .\<Name>.rdp                            in the directory New-AgentVM.ps1 was run from
 ```
+
+The RDP password is in none of these files. On the host it is only in Windows Credential
+Manager, under `TERMSRV/<address>` for the `.rdp` file and `agent-vm:<Name>` for
+`Get-AgentVMPassword.ps1`.
 
 To move all of it to another drive, set the variable once at machine scope and open a new
 shell, or pass the same `-Root` to every script:
@@ -142,19 +145,20 @@ Run from the repo root, in an elevated shell. About two minutes to a running VM.
    memory, nested virtualization, MAC spoofing, Secure Boot off and checkpoints disabled.
    All of that is required for KVM inside the guest.
 4. Renders the cloud-init seed: hostname, the `dev` user with your SSH key and passwordless
-   sudo, the RDP password, `~/.env` with the project name and adb settings, and a `runcmd`
-   that creates `~/app`, writes the agent desktop's VNC password and starts it, and starts
-   the emulator from the golden snapshot (emulator VMs only). The agent desktop opens the
-   `tmux` session named `agent` itself, on this and every later boot; `runcmd` runs only
-   once. Builds `seed.iso` and attaches it as a DVD drive, then puts the disk back first in
-   the boot order.
-5. Starts the VM and polls for a DHCP address.
-6. Writes `<Name>.rdp` with lossless settings, saves the RDP password in Windows Credential
-   Manager as `TERMSRV/<address>` so the file opens straight onto the agent desktop, and
-   prints the connection lines: SSH with the tmux session, RDP, the emulator's adb address
-   or the phone's serial, a screenshot command, and the Metro URL.
-7. Once SSH answers and cloud-init has finished, copies `agentvm-setup.sh` to `/tmp` in the
-   guest and pipes the accepted credentials to it on stdin (never as arguments):
+   sudo, `~/.env` with the project name and adb settings, and a `runcmd` that creates
+   `~/app` and starts the emulator from the golden snapshot (emulator VMs only); `runcmd`
+   runs only once. No password: the seed stays attached and readable inside the guest.
+   Builds `seed.iso` and attaches it as a DVD drive, then puts the disk back first in the
+   boot order.
+5. Starts the VM, polls for a DHCP address, and writes `<Name>.rdp` with lossless settings.
+6. Once SSH answers and cloud-init has finished, sets the RDP password by calling
+   `Set-AgentVMPassword.ps1`: Unix and VNC password in the guest, which starts the agent
+   desktop and with it the `tmux` session named `agent`, and Credential Manager on the
+   host, so the `.rdp` file opens straight onto the agent desktop. Then prints the
+   connection lines: SSH with the tmux session, RDP, the emulator's adb address or the
+   phone's serial, a screenshot command, and the Metro URL.
+7. Copies `agentvm-setup.sh` to `/tmp` in the guest and pipes the accepted credentials to
+   it on stdin (never as arguments):
    `gh auth login --with-token`, `gh auth setup-git`,
    `git config --global user.*`, and the Claude token into `~/.claude/settings.json` as
    `env.CLAUDE_CODE_OAUTH_TOKEN`, which logs in the CLI and the VS Code extension alike.
@@ -165,7 +169,7 @@ Run from the repo root, in an elevated shell. About two minutes to a running VM.
    guest, so a declined or failed run can be finished later with the command the summary
    prints.
 
-Nothing GitHub- or Claude-related goes into the golden image or onto the seed ISO. The seed
+No password and nothing GitHub- or Claude-related goes into the golden image or onto the seed ISO. The seed
 ISO stays attached and readable inside the guest, which is why none of this is part of first
 boot. A copied GitHub token is shared with the host: revoking it logs both out. The Claude
 token overrides `/login` in that VM; delete the `env` entry from the settings file to switch
@@ -252,11 +256,15 @@ Run from the repo root. No elevation.
 .\Get-AgentVMPassword.ps1 -Name app-foo | Set-Clipboard
 ```
 
-**What it does.** Prints the RDP password of the `dev` account. If `rdp-password.txt`
-exists in the project folder it wins, because `Set-AgentVMPassword.ps1` wrote it after a
-change. Otherwise the password is read out of `seed.iso`, where cloud-init's `chpasswd`
-entry holds it in plain text. The ISO is scanned as bytes rather than mounted, so the
-running VM's hold on the file does not matter and nothing needs to be dismounted.
+**What it does.** Prints the RDP password of the `dev` account, read from Windows
+Credential Manager (`agent-vm:<Name>`), where `Set-AgentVMPassword.ps1` saves every password
+it sets, the first one included. Credential Manager entries belong to the Windows user that
+wrote them, so run it as the same user that created the VM. `cmdkey` can only write, so the
+script reads the entry through the `CredRead` API.
+
+VMs created before passwords moved off the seed ISO are still read: from
+`rdp-password.txt` in the project folder if an earlier `Set-AgentVMPassword.ps1` wrote one,
+else from the `chpasswd` entry on `seed.iso`, scanned as bytes rather than mounted.
 
 Only the password goes to the pipeline; the source it came from goes to the host stream.
 
@@ -269,9 +277,9 @@ Only the password goes to the pipeline; the source it came from goes to the host
 | `-VmRoot` | `<Root>\vms` | Where the project folder is |
 | `-User` | `dev` | Account to look up |
 
-**Fails when** the project folder is missing, the seed ISO is gone, or the ISO has no
-`chpasswd` entry for the user. In the second case `Set-AgentVMPassword.ps1` is the way
-forward.
+**Fails when** the project folder is missing, or no password is saved for the VM in
+Credential Manager and there is no older record either. `Set-AgentVMPassword.ps1` is the
+way forward.
 
 ---
 
@@ -296,27 +304,30 @@ Run from the repo root. Elevation only when the VM's address has to be looked up
    value goes over stdin, never on a command line, and the guest strips the carriage
    return PowerShell appends to piped text and the UTF-8 byte order mark it puts in front
    when the console's input encoding is UTF-8.
-4. Writes the agent desktop's VNC password (`~/.vnc/passwd`) and the copy the running Xvnc
-   reads, which it re-reads on every connection: the change applies without restarting
-   the desktop or the agent in it. Only the first 8 characters count there.
-5. Updates the Credential Manager entry `TERMSRV/<address>` the `.rdp` file logs in with.
-6. Records the password in `rdp-password.txt` in the project folder for
-   `Get-AgentVMPassword.ps1`, unless `-NoRecord`. Prints it.
+4. Writes the agent desktop's VNC password (`~/.vnc/passwd`). If the desktop is not
+   running - on a new VM it cannot start before it has a password - starts it. If it is,
+   also overwrites the copy the running Xvnc reads, which it re-reads on every connection:
+   the change applies without restarting the desktop or the agent in it. Only the first 8
+   characters count there.
+5. Unless `-NoRecord`, saves the password in Credential Manager as `TERMSRV/<address>`,
+   which the `.rdp` file logs in with, and `agent-vm:<Name>`, which
+   `Get-AgentVMPassword.ps1` reads, and deletes an `rdp-password.txt` left by an earlier
+   version. Prints the password.
 
-The seed ISO keeps the original password, but cloud-init applies `chpasswd` only on the
-first boot of an instance, so the change survives reboots.
+`New-AgentVM.ps1` calls this script for every new VM, so it is also how the first password
+is set. None is ever written to a file or to the seed ISO.
 
 **Parameters**
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `-Name` | required | The VM |
-| `-Password` | generated | 1 to 64 printable ASCII characters |
+| `-Password` | generated | 1 to 64 letters, digits or `!#%+,./:=?@^_~-`; no spaces or quotes, because `cmdkey` gets it on its command line |
 | `-IpAddress` | looked up via Hyper-V | Guest address; skips the lookup and the elevation |
 | `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
 | `-VmRoot` | `<Root>\vms` | Where the project folder is |
 | `-User` | `dev` | Account to change |
-| `-NoRecord` | off | Do not write `rdp-password.txt` |
+| `-NoRecord` | off | Change the guest only and leave Credential Manager alone |
 
 **Fails when** SSH cannot log in. The usual causes are a VM that is not up, a key that is
 not the one on the `dev` account, or a stale `known_hosts` entry after a DHCP lease was

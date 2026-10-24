@@ -1,21 +1,22 @@
 <#
 .SYNOPSIS
-    Sets a new RDP password on a running dev VM created by New-AgentVM.ps1.
+    Sets the RDP password of a running dev VM created by New-AgentVM.ps1.
 
 .DESCRIPTION
-    Changes the guest password over SSH, which needs no password of its own: New-AgentVM.ps1
-    put your public key on the dev account, and dev has passwordless sudo.
+    New-AgentVM.ps1 calls this for the first password of every VM, and it is the way to
+    change it later. Everything goes over SSH, which needs no password of its own:
+    New-AgentVM.ps1 put your public key on the dev account, and dev has passwordless sudo.
 
-    The new value reaches the guest on stdin, never on a command line, so it shows up in
-    neither the host's nor the guest's process list. Carriage returns are stripped on the
-    guest side because PowerShell terminates piped text with CRLF and chpasswd would keep
-    the \r as part of the password.
+    In the guest it sets the Unix password (chpasswd) and the agent desktop's VNC password,
+    and starts the agent desktop if it is not running yet - on a new VM it cannot start
+    before it has a password. On the host it saves the password in Windows Credential
+    Manager twice: as TERMSRV/<address>, which the .rdp file logs in with, and as
+    agent-vm:<Name>, which Get-AgentVMPassword.ps1 reads back.
 
-    The seed ISO in the project folder still holds the original password, but cloud-init
-    applies chpasswd only on the first boot of an instance, so the change is permanent. The
-    new value is recorded in rdp-password.txt next to the ISO, where Get-AgentVMPassword.ps1
-    looks first. That file is no more exposed than the ISO beside it, which already carries
-    the original in plain text.
+    The password is never written to a file. It is not on the seed ISO either, which stays
+    attached to the VM and is readable from inside it. The new value reaches the guest on
+    stdin, never on a command line, so it shows up in neither the host's nor the guest's
+    process list.
 
     Administrator is only needed when the VM's address has to be looked up through Hyper-V.
     Pass -IpAddress to skip the lookup and run unelevated.
@@ -25,7 +26,8 @@
 
 .PARAMETER Password
     The new password. Generated when omitted (8 unambiguous alphanumerics, like New-AgentVM.ps1)
-    and printed at the end. Printable ASCII only, 1 to 64 characters.
+    and printed at the end. 1 to 64 letters, digits or !#%+,./:=?@^_~- (no spaces or quotes:
+    cmdkey receives it on its command line). The agent desktop only checks the first 8.
 
 .PARAMETER IpAddress
     Guest address. Looked up from the VM's network adapter when omitted, which requires an
@@ -39,8 +41,8 @@
     Guest account to change. Default dev.
 
 .PARAMETER NoRecord
-    Do not write rdp-password.txt. Get-AgentVMPassword.ps1 will then keep reporting the
-    original password from the seed ISO.
+    Change the password in the guest only, and leave Credential Manager alone. The .rdp file
+    and Get-AgentVMPassword.ps1 then still have the previous password.
 
 .EXAMPLE
     .\Set-AgentVMPassword.ps1 -Name app-foo
@@ -57,7 +59,9 @@ param(
     [string]$Name,
 
     # Printable ASCII. chpasswd splits on the first colon, so a colon inside is fine.
-    [ValidatePattern('^[\x20-\x7E]{1,64}$')]
+    # cmdkey takes the password as a command-line argument, so a space or a quote would
+    # be split or mangled on its way into Credential Manager.
+    [ValidatePattern('^[A-Za-z0-9!#%+,./:=?@^_~-]{1,64}$')]
     [string]$Password,
 
     [ValidatePattern('^\d{1,3}(\.\d{1,3}){3}$')]
@@ -159,14 +163,21 @@ if ($LASTEXITCODE -ne 0) {
     throw "ssh exited $LASTEXITCODE; the password was NOT changed. Is the VM up and your key in ~/.ssh/authorized_keys of ${User}? A stale known_hosts entry for $IpAddress (ssh-keygen -R $IpAddress) also causes this."
 }
 
-# The agent desktop checks its own VNC password, not the Unix one (10-desktop-xrdp.sh). The
-# running Xvnc reads a copy that tigervncsession made under /tmp at startup, but re-reads it
-# on every connection, so overwriting both files switches the password without restarting
-# the desktop - and the agent running in it. Images without the agent desktop exit 0 early.
+# The agent desktop checks its own VNC password, not the Unix one (10-desktop-xrdp.sh).
+#
+# On a new VM there is no ~/.vnc/passwd yet, so the unit's ConditionPathExists skipped it at
+# boot; it is started here, once it has a password. On a running desktop, Xvnc reads a copy
+# that tigervncsession made under /tmp at startup, but re-reads it on every connection, so
+# overwriting both files switches the password without restarting the desktop - and the
+# agent running in it. Images without the agent desktop exit 0 early.
 $vncUpdate = @'
 [ -d ~/.vnc ] && command -v vncpasswd >/dev/null || exit 0
 umask 077
 sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' | vncpasswd -f > ~/.vnc/passwd.new && mv ~/.vnc/passwd.new ~/.vnc/passwd || exit 1
+if ! systemctl is-active --quiet tigervncserver@:1; then
+    sudo systemctl start tigervncserver@:1
+    exit
+fi
 pid=$(pgrep -x -u $(id -u) Xtigervnc) || exit 0
 live=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -A1 -- -PasswordFile | tail -1)
 case $live in /*) cp ~/.vnc/passwd $live ;; esac
@@ -179,18 +190,26 @@ elseif ($Password.Length -gt 8) {
     Write-Note "the agent desktop only checks the first 8 characters ('$($Password.Substring(0, 8))')"
 }
 
-# The .rdp file from New-AgentVM.ps1 logs in with this entry; keep it in step.
-& cmdkey.exe "/generic:TERMSRV/$IpAddress" "/user:$User" "/pass:$Password" | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Note "saved in Credential Manager as TERMSRV/$IpAddress"
-} else {
-    Write-Warning "cmdkey failed ($LASTEXITCODE); the .rdp file will ask for the new password."
-}
-
+# Credential Manager is the only place the password is kept on the host; it is encrypted
+# for the current Windows user. TERMSRV/<address> is what mstsc looks up when the .rdp file
+# connects. agent-vm:<Name> survives a DHCP address change and is what Get-AgentVMPassword.ps1
+# reads, since cmdkey itself can only write.
 if (-not $NoRecord) {
-    $recordPath = Join-Path $vmPath 'rdp-password.txt'
-    Set-Content -LiteralPath $recordPath -Value $Password -Encoding ASCII -NoNewline
-    Write-Note "recorded in $recordPath for Get-AgentVMPassword.ps1"
+    foreach ($credTarget in "TERMSRV/$IpAddress", "agent-vm:$Name") {
+        & cmdkey.exe "/generic:$credTarget" "/user:$User" "/pass:$Password" | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Note "saved in Credential Manager as $credTarget"
+        } else {
+            Write-Warning "cmdkey failed for $credTarget ($LASTEXITCODE)."
+        }
+    }
+
+    # Written by earlier versions of this script. Stale now, and plain text.
+    $legacyRecord = Join-Path $vmPath 'rdp-password.txt'
+    if (Test-Path -LiteralPath $legacyRecord) {
+        Remove-Item -LiteralPath $legacyRecord -Force
+        Write-Note "deleted the old plain-text record $legacyRecord"
+    }
 }
 
 Write-Host ''

@@ -315,24 +315,31 @@ Get-VMNetworkAdapter -VMName app-foo | Select-Object -ExpandProperty IPAddresses
 ### 4.1 First boot — **[G]**, run by cloud-init from the seed ISO
 
 ```bash
-# user: dev (sudo, kvm), your SSH key, RDP password from chpasswd
+# user: dev (sudo, kvm), your SSH key - and NO password: the image's is locked
 # ~/.env: PROJECT, ADB_SERVER_SOCKET, ANDROID_SERIAL   (no credentials)
-# No clone and no credentials here: cloud-init runs before anyone can authenticate, so a
-# private repo would need a credential on the seed ISO - which stays attached and readable
-# in the guest. Credentials and the checkout are SSH steps after boot (4.2, 4.3).
+# No password, clone or credentials here: cloud-init runs before anyone can authenticate,
+# and the seed ISO stays attached and readable in the guest. The password, credentials and
+# the checkout are SSH steps after boot (4.2, 4.3, and the password step below).
 sudo -u dev mkdir -p /home/dev/app
-# the agent desktop: per-VM VNC password, then start the unit its condition skipped at boot.
-# Its autostart opens the agent's tmux session inside it, with DISPLAY=:1.
-sudo -u dev bash -c 'umask 077; printf "%s\n" "<RDP password>" | vncpasswd -f > ~/.vnc/passwd'
-systemctl start tigervncserver@:1
 # emulator path only (no DEVICE_SERIAL):
 sudo -u dev bash -lc '~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &'
 sudo -u dev bash -lc 'sleep 20 && adb wait-for-device'
 ```
 
-runcmd runs on the first boot only. On every later boot, systemd starts the agent desktop
-and with it the `agent` tmux session; the emulator is not restarted (start it by hand with
-`~/bin/emu -snapshot golden`).
+runcmd runs on the first boot only; the emulator is not restarted on later boots (start it
+by hand with `~/bin/emu -snapshot golden`).
+
+The agent desktop does not start yet: it has no password. Once cloud-init has finished,
+`New-AgentVM.ps1` runs `Set-AgentVMPassword.ps1` **[H]**, which over SSH does:
+
+```bash
+chpasswd                                        # dev:<password>, from stdin
+vncpasswd -f > ~/.vnc/passwd                    # the agent desktop's password, first 8 chars
+sudo systemctl start tigervncserver@:1          # from now on systemd starts it at every boot
+```
+
+and saves the password on the host in Credential Manager (`TERMSRV/<vm-ip>`,
+`agent-vm:<name>`). The desktop's autostart opens the `agent` tmux session, with `DISPLAY=:1`.
 
 Watch it: **[G]** `sudo cloud-init status --wait; sudo tail -f /var/log/cloud-init-output.log`
 
@@ -428,21 +435,20 @@ Closing the window leaves all of it running. The session list in the xrdp dialog
 offers **Xorg**, a separate desktop created for that login.
 
 The RDP password is printed once by `New-AgentVM.ps1` and saved in Windows Credential
-Manager as `TERMSRV/<vm-ip>`, which is why the `.rdp` file opens without a prompt. It still
-protects the VM from the rest of the LAN, but it is short, the agent desktop only checks its
-first 8 characters, and it can be read back or replaced at any time:
+Manager as `TERMSRV/<vm-ip>`, which is why the `.rdp` file opens without a prompt, and as
+`agent-vm:<name>`. It is in no file, on the host or on the seed ISO. It still protects the
+VM from the rest of the LAN, but it is short, the agent desktop only checks its first 8
+characters, and it can be read back or replaced at any time:
 
 ```powershell
-.\Get-AgentVMPassword.ps1 -Name app-foo                    # from the seed ISO; no elevation needed
+.\Get-AgentVMPassword.ps1 -Name app-foo                    # from Credential Manager; no elevation needed
 .\Get-AgentVMPassword.ps1 -Name app-foo | Set-Clipboard
 .\Set-AgentVMPassword.ps1 -Name app-foo                    # generates one, applies it over ssh, prints it
 .\Set-AgentVMPassword.ps1 -Name app-foo -Password hunter2
 ```
 
-`Set-AgentVMPassword.ps1` changes the Unix password, the agent desktop's VNC password and the
-Credential Manager entry, without restarting the desktop. It records the new value in
-`C:\Hyper-V\vms\app-foo\rdp-password.txt`, which `Get-AgentVMPassword.ps1` prefers over the
-now-stale ISO.
+`Set-AgentVMPassword.ps1` changes the Unix password, the agent desktop's VNC password and
+both Credential Manager entries, without restarting the desktop.
 
 **[G]**
 

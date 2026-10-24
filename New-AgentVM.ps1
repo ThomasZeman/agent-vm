@@ -10,23 +10,24 @@
          Secure Boot off and checkpoints disabled - all required for KVM inside the guest.
       3. Renders the cloud-init NoCloud seed (user-data / meta-data), builds seed.iso with
          oscdimg and attaches it as a DVD drive.
-      4. Starts the VM, waits for a DHCP address, writes a tuned .rdp file, saves the RDP
-         password in Windows Credential Manager so the file opens without a prompt, and
-         prints the connection lines. RDP lands on the agent desktop, a persistent XFCE
-         session that the guest starts at boot (packer/scripts/10-desktop-xrdp.sh).
-      5. Offers to hand this host's logins to the guest over SSH once it is up: the GitHub
-         token `gh` holds here plus your global git identity, and a long-lived Claude
-         subscription token from `claude setup-token`. Each is a separate yes/no, asked
-         before the VM is built so the wait is uninterrupted, and each has a -Skip switch.
-      6. With -Repo, clones the project into /home/dev/app. Unattended if the GitHub token
+      4. Starts the VM, waits for a DHCP address and writes a tuned .rdp file.
+      5. Once SSH answers and first boot has finished, sets the RDP password through
+         Set-AgentVMPassword.ps1: the Unix and VNC passwords in the guest, which starts the
+         agent desktop (packer/scripts/10-desktop-xrdp.sh), and Windows Credential Manager
+         on the host, so the .rdp file opens straight onto that desktop with no prompt.
+      6. Offers to hand this host's logins to the guest over SSH: the GitHub token `gh`
+         holds here plus your global git identity, and a long-lived Claude subscription
+         token from `claude setup-token`. Each is a separate yes/no, asked before the VM is
+         built so the wait is uninterrupted, and each has a -Skip switch.
+      7. With -Repo, clones the project into /home/dev/app. Unattended if the GitHub token
          was handed over, otherwise through an interactive `gh auth login` in the guest.
 
-    Steps 5 and 6 are deliberately NOT part of first boot. cloud-init runs before anyone can
+    Steps 5 to 7 are deliberately NOT part of first boot. cloud-init runs before anyone can
     type a password, so anything it needed would have to ship in the image or on the seed
     ISO - and that ISO stays attached to the VM for its whole life and is readable from
-    inside the guest. Delivering credentials over SSH afterwards means they exist in exactly
-    two places, this host and that one guest, and the golden image stays free of any GitHub,
-    git or Claude identity at all.
+    inside the guest. Delivering the password and credentials over SSH afterwards means they
+    exist in exactly two places, this host and that one guest, and the golden image stays
+    free of any password, GitHub, git or Claude identity at all.
 
     Run from an elevated PowerShell session; the Hyper-V cmdlets require Administrator.
 
@@ -122,7 +123,7 @@ param(
     [string]$SshPublicKeyPath = "$HOME\.ssh\id_ed25519.pub",
 
     # Generated when omitted; printed once at the end and saved in Credential Manager.
-    # Letters and digits only, and VNC (the agent desktop) uses just the first 8.
+    # Set over SSH after boot, never on the seed ISO. The agent desktop checks the first 8.
     [string]$RdpPassword,
 
     [string]$OscdimgPath = 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe',
@@ -485,14 +486,14 @@ if ($DeviceSerial -and -not $HostIp) {
 
 if (-not $RdpPassword) { $RdpPassword = New-RandomPassword }
 
-# The password is substituted into single-quoted shell inside runcmd as well as into YAML.
-if ($RdpPassword -notmatch '^[A-Za-z0-9]+$') {
-    throw '-RdpPassword may contain letters and digits only.'
+# Set-AgentVMPassword.ps1 applies it once the VM is up and rejects anything outside this
+# pattern; checked here so that does not happen after the VM has been built.
+if ($RdpPassword -notmatch '^[A-Za-z0-9!#%+,./:=?@^_~-]{1,64}$') {
+    throw '-RdpPassword: 1 to 64 letters, digits or !#%+,./:=?@^_~- (no spaces or quotes).'
 }
-# VNC authentication is DES over the first 8 characters; the rest is silently ignored by the
-# agent desktop, while the Xorg fallback session (PAM) still checks the whole password.
-if ($RdpPassword.Length -gt 8) {
-    Write-Warning "-RdpPassword is longer than 8 characters. The agent desktop only checks the first 8 ('$($RdpPassword.Substring(0, 8))')."
+$setPasswordScript = Join-Path $PSScriptRoot 'Set-AgentVMPassword.ps1'
+if (-not (Test-Path -LiteralPath $setPasswordScript)) {
+    throw "Set-AgentVMPassword.ps1 is missing from $PSScriptRoot; it sets the VM's password."
 }
 
 $sshPublicKey = (Get-Content -LiteralPath $SshPublicKeyPath -Raw).Trim()
@@ -607,10 +608,8 @@ users:
     shell: /bin/bash
     ssh_authorized_keys:
       - ${SSH_PUBKEY}
-chpasswd:
-  list: |
-    dev:${RDP_PASSWORD}
-  expire: false
+# No password here. This file stays attached to the VM as seed.iso and is readable from
+# inside it, so the RDP password is set over SSH once the VM is up (Set-AgentVMPassword.ps1).
 write_files:
   - path: /home/dev/.env
     owner: dev:dev
@@ -640,18 +639,16 @@ runcmd:
   # life of the VM. The checkout is an interactive step over SSH instead; this only has to
   # exist so the agent's tmux session has a working directory.
   - [sudo, -u, dev, mkdir, -p, /home/dev/app]
-  # The agent desktop (10-desktop-xrdp.sh). Its VNC password is per VM, so it is written
-  # here, and the unit is started by hand because its ConditionPathExists skipped it earlier
-  # in this same boot. From the second boot on, systemd starts it with nothing from here.
-  # The desktop's autostart opens the agent's tmux session inside it, with DISPLAY=:1.
+  # Nothing for the agent desktop (10-desktop-xrdp.sh): it starts once Set-AgentVMPassword.ps1
+  # has given it a password over SSH, and from then on at every boot. Its autostart opens the
+  # agent's tmux session inside it, with DISPLAY=:1.
   #
   # runcmd runs only on the FIRST boot of an instance. Anything that has to be running after
   # every boot belongs in systemd or the desktop's autostart, never only here.
   #
   # An image from before the agent desktop has no vncpasswd; it gets the old detached tmux
   # session instead, which has no display.
-  - [sudo, -u, dev, bash, -c, 'if command -v vncpasswd >/dev/null; then umask 077; printf "%s\n" "${RDP_PASSWORD}" | vncpasswd -f > /home/dev/.vnc/passwd; else tmux new -d -s agent -c /home/dev/app; fi']
-  - [bash, -c, 'systemctl start tigervncserver@:1 || true']
+  - [sudo, -u, dev, bash, -c, 'command -v vncpasswd >/dev/null || tmux new -d -s agent -c /home/dev/app']
   # Emulator only when no phone is assigned to this VM
   - [sudo, -u, dev, bash, -lc, '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true']
   # Wait for the emulator to register, but do NOT run `adb tcpip 5555` here. That switches
@@ -822,7 +819,6 @@ $adbServerSocket = if ($DeviceSerial) { "tcp:${HostIp}:5037" } else { '' }
 $substitutions = [ordered]@{
     '${NAME}'              = $Name
     '${SSH_PUBKEY}'        = $sshPublicKey
-    '${RDP_PASSWORD}'      = $RdpPassword
     '${ADB_SERVER_SOCKET}' = $adbServerSocket
     '${DEVICE_SERIAL}'     = $DeviceSerial
     '${INSTANCE}'          = [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -868,11 +864,10 @@ Write-Step "Waiting for a DHCP address, up to $IpTimeoutSeconds s"
 $ip = Wait-ForGuestIPv4 -VMName $Name -TimeoutSeconds $IpTimeoutSeconds
 
 if (-not $ip) {
-    Write-Warning "No address reported within $IpTimeoutSeconds s. The VM is running - check the Hyper-V console or your DHCP leases, then write the .rdp file by hand."
+    Write-Warning "No address reported within $IpTimeoutSeconds s. The VM is running - check the Hyper-V console or your DHCP leases."
     Write-Host ''
-    Write-Host "VM:       $Name"
-    Write-Host "RDP user: dev"
-    Write-Host "RDP pass: $RdpPassword"
+    Write-Host "VM '$Name' has no RDP password and no agent desktop yet. Once it has an address:"
+    Write-Host "  .\Set-AgentVMPassword.ps1 -Name $Name -Password $RdpPassword"
     return
 }
 
@@ -906,13 +901,25 @@ audiomode:i:2
 "@
 Set-Content -LiteralPath $rdpPath -Value $rdpContent -Encoding ASCII
 
-# mstsc looks up TERMSRV/<address> in Credential Manager and sends it with the connection.
-# xrdp hands that password to the agent desktop's VNC check, so the .rdp file opens straight
-# onto the desktop with no dialog. The entry belongs to the current Windows user only; the
-# protection against the rest of the LAN is unchanged, because the guest still checks it.
-& cmdkey.exe "/generic:TERMSRV/$ip" '/user:dev' "/pass:$RdpPassword" | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "cmdkey failed ($LASTEXITCODE); the .rdp file will ask for the password."
+# ------------------------------------------------------------ RDP password ---
+
+# Every post-boot step needs SSH and a finished first boot; this waits for both once.
+$guestReady = Initialize-GuestSetup -IpAddress $ip -SetupScript $guestSetupScript
+
+# The password is set here, over SSH, and never written to the seed ISO. Set-AgentVMPassword.ps1
+# also starts the agent desktop, which cannot start without one, and saves the password in
+# Credential Manager as TERMSRV/<address>: mstsc sends that entry with the connection and
+# xrdp hands it to the desktop's VNC check, so the .rdp file opens with no dialog.
+$passwordSet = $false
+if ($guestReady) {
+    Write-Step 'Setting the RDP password'
+    try {
+        & $setPasswordScript -Name $Name -IpAddress $ip -Password $RdpPassword -VmRoot $VmRoot
+        $passwordSet = $true
+    }
+    catch {
+        Write-Warning "Setting the password failed: $($_.Exception.Message)"
+    }
 }
 
 # ----------------------------------------------------------- connect info ---
@@ -921,7 +928,11 @@ Write-Host ''
 Write-Step "'$Name' is up at $ip"
 Write-Host ''
 Write-Host "  SSH + agent : ssh dev@$ip -t tmux attach -t agent"
-Write-Host "  RDP         : $rdpPath   (agent desktop, no prompt; password $RdpPassword in Credential Manager)"
+if ($passwordSet) {
+    Write-Host "  RDP         : $rdpPath   (agent desktop, no prompt; password $RdpPassword in Credential Manager)"
+} else {
+    Write-Host "  RDP         : $rdpPath   NOT usable yet - no password. Run: .\Set-AgentVMPassword.ps1 -Name $Name -IpAddress $ip -Password $RdpPassword" -ForegroundColor Yellow
+}
 if ($DeviceSerial) {
     Write-Host "  Device      : $DeviceSerial via the host adb server, tcp:${HostIp}:5037"
     Write-Host "  Screen      : scrcpy -s $DeviceSerial          # on the host, over USB"
@@ -937,14 +948,10 @@ Write-Host ''
 
 # ------------------------------------------ credentials and checkout ---
 
-$guestReady = $false
+# $guestReady comes from the RDP password step above, which waited for the guest once.
 $handoffOk  = $false
 $repoReady  = $false
 $wantClone  = [bool]($Repo -and -not $SkipGitHubLogin)
-
-if ($handoff.Count -gt 0 -or $wantClone) {
-    $guestReady = Initialize-GuestSetup -IpAddress $ip -SetupScript $guestSetupScript
-}
 
 if ($handoff.Count -gt 0 -and $guestReady) {
     Write-Step "Handing over credentials to $ip"

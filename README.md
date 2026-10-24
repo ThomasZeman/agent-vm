@@ -40,9 +40,10 @@ Each VM gets:
 - VS Code, Google Chrome with the Claude in Chrome extension, Chromium and Playwright with its browsers.
 - Claude Code (CLI and VS Code extension) and the GitHub CLI, both logged into nothing.
 
-It is worth mentioning that no credentials are part of the image or the seed ISO. The image is shared by every VM,
-and the seed ISO stays attached to the VM and is readable from inside it. `New-AgentVM.ps1` hands the GitHub and
-Claude logins to one guest over SSH after it has booted, and only when I ask it to.
+It is worth mentioning that no credentials are part of the image or the seed ISO, not even a password. The image is
+shared by every VM, and the seed ISO stays attached to the VM and is readable from inside it. `New-AgentVM.ps1` sets
+the RDP password over SSH after the VM has booted, and hands over the GitHub and Claude logins the same way, only
+when I ask it to. The password Packer uses during the image build is locked before the image is exported.
 
 ## Requirements
 
@@ -88,8 +89,8 @@ All commands need an elevated PowerShell, apart from `Get-AgentVMPassword.ps1`.
    ```
 
 The RDP password is printed once when the VM is created and saved in Windows Credential Manager, so the `.rdp` file
-opens without asking for it. `Get-AgentVMPassword.ps1 -Name app-foo` reads it back, and `Set-AgentVMPassword.ps1`
-replaces it.
+opens without asking for it. It is not stored in any file. `Get-AgentVMPassword.ps1 -Name app-foo` reads it back
+from Credential Manager, and `Set-AgentVMPassword.ps1` replaces it.
 
 By default, images and VMs live under `C:\Hyper-V`. To use another drive, set `AGENTVM_ROOT` once, or pass the same
 `-Root` to every script.
@@ -143,13 +144,10 @@ more than that created, and only start the ones I am working on.
 
 This is work in progress, and some parts are not finished yet:
 
-- The RDP password is in plain text on the seed ISO, which the guest can read. The VMs are only reachable on my
-  local network, so I accepted this for now, but it is on my list. Please note, the agent desktop only checks the
-  first 8 characters of it, which is a limit of VNC authentication.
+- The agent desktop only checks the first 8 characters of the RDP password, which is a limit of VNC
+  authentication. The VMs are only reachable on my local network, so I accept this.
 - The Android emulator is started by cloud-init, which only runs on the first boot of a VM. After a reboot it has
   to be started by hand.
-- The golden image has a known console password (`devvm`) for debugging a failed build at the Hyper-V console. SSH
-  never accepts it. If you build the image yourself, change it as described in [packer/README.md](packer/README.md).
 - There is no GPU acceleration in the guests. The emulator renders with SwiftShader, which is fine for app UIs and
   too slow for games.
 

@@ -3,21 +3,17 @@
     Prints the RDP password of a dev VM created by New-AgentVM.ps1.
 
 .DESCRIPTION
-    New-AgentVM.ps1 shows the generated password exactly once. It is not lost after that: the
-    cloud-init seed ISO the VM booted from stays in the project folder for the life of the
-    VM, and its user-data carries the password in plain text (a chpasswd entry). This script
-    reads it back from there.
+    New-AgentVM.ps1 shows the generated password once, and Set-AgentVMPassword.ps1 - which
+    sets every password, the first one included - saves it in Windows Credential Manager as
+    agent-vm:<Name>. This script reads it back from there, for the current Windows user.
 
-    If Set-AgentVMPassword.ps1 has changed the password since, the ISO is stale. That script
-    records the new value in rdp-password.txt next to the ISO, and this one prefers that
-    file when it exists.
+    VMs created before that keep their password elsewhere, and are still read:
+      - rdp-password.txt in the project folder, written by an earlier Set-AgentVMPassword.ps1.
+      - The cloud-init seed ISO, whose user-data used to carry the original password in a
+        chpasswd entry. The ISO is scanned as raw bytes rather than mounted: the VM holds it
+        open as a DVD drive, and user-data's bytes sit verbatim inside the image.
 
-    The ISO is scanned as raw bytes rather than mounted. The VM holds it open as a DVD
-    drive, mounting on the host needs a drive letter and a dismount even on failure, and
-    user-data is a small text file whose bytes sit verbatim inside the image - a scan finds
-    the line without any of that.
-
-    No Administrator rights needed: only files under the project folder are read.
+    No Administrator rights needed.
 
 .PARAMETER Name
     Project / VM name, e.g. app-foo. The same value passed to New-AgentVM.ps1.
@@ -64,7 +60,39 @@ if (-not (Test-Path -LiteralPath $vmPath)) {
     throw "No project folder for '$Name' at $vmPath. Check -Name, or -Root if the VMs live on another drive."
 }
 
-# Written by Set-AgentVMPassword.ps1; newer than anything on the ISO.
+# Credential Manager first: where Set-AgentVMPassword.ps1 keeps every password it sets. cmdkey
+# can only write, so this reads through CredRead. The blob is the password in UTF-16.
+Add-Type -Namespace AgentVM -Name Cred -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct CREDENTIAL {
+    public int Flags; public int Type; public string TargetName; public string Comment;
+    public long LastWritten; public int CredentialBlobSize; public IntPtr CredentialBlob;
+    public int Persist; public int AttributeCount; public IntPtr Attributes;
+    public string TargetAlias; public string UserName;
+}
+[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool CredRead(string target, int type, int flags, out IntPtr credential);
+[DllImport("advapi32.dll")]
+public static extern void CredFree(IntPtr credential);
+
+public static string ReadGenericPassword(string target) {
+    IntPtr ptr;
+    if (!CredRead(target, 1, 0, out ptr)) { return null; }   // 1 = CRED_TYPE_GENERIC
+    try {
+        var cred = (CREDENTIAL)Marshal.PtrToStructure(ptr, typeof(CREDENTIAL));
+        if (cred.CredentialBlobSize == 0) { return null; }
+        return Marshal.PtrToStringUni(cred.CredentialBlob, cred.CredentialBlobSize / 2);
+    } finally { CredFree(ptr); }
+}
+'@
+
+$saved = [AgentVM.Cred]::ReadGenericPassword("agent-vm:$Name")
+if ($saved) {
+    Write-Note "from Windows Credential Manager (agent-vm:$Name)"
+    return $saved
+}
+
+# Written by earlier versions of Set-AgentVMPassword.ps1; newer than anything on the ISO.
 $recordPath = Join-Path $vmPath 'rdp-password.txt'
 if (Test-Path -LiteralPath $recordPath) {
     $recorded = (Get-Content -LiteralPath $recordPath -Raw).Trim()
@@ -76,7 +104,7 @@ if (Test-Path -LiteralPath $recordPath) {
 
 $seedIso = Join-Path $vmPath 'seed.iso'
 if (-not (Test-Path -LiteralPath $seedIso)) {
-    throw "No seed ISO at $seedIso, so the original password cannot be recovered. Set a new one: .\Set-AgentVMPassword.ps1 -Name $Name"
+    throw "No password saved for '$Name' in Credential Manager, and no seed ISO at $seedIso. Set a new one: .\Set-AgentVMPassword.ps1 -Name $Name"
 }
 
 # Latin-1 maps every byte to exactly one char, so the ASCII text survives intact.
@@ -90,7 +118,7 @@ $text = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
 $pattern = '(?m)^chpasswd:\r?\n\s+list:\s*\|\r?\n\s+' + [regex]::Escape($User) + ':([^\r\n]+)'
 $match = [regex]::Match($text, $pattern)
 if (-not $match.Success) {
-    throw "No chpasswd entry for '$User' found in $seedIso. Was this VM created by New-AgentVM.ps1?"
+    throw "No password saved for '$Name' in Credential Manager, and none on its seed ISO. Set a new one: .\Set-AgentVMPassword.ps1 -Name $Name"
 }
 
 Write-Note "from $seedIso (as set at creation)"

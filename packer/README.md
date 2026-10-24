@@ -32,12 +32,17 @@ scripts/90-cleanup.sh          Generalization — the step that makes cloning wo
 ### The dev console password
 
 SSH into the image is key-only (`ssh.allow-pw: false`), so the `dev` account's password only
-matters at the **Hyper-V console** — `Ctrl+Alt+F2` during a build, or the login prompt on a
-VM that failed to come up. The default is:
+matters at the **Hyper-V console**, as `Ctrl+Alt+F2` while a build hangs. The default is:
 
 | user | password |
 |---|---|
 | `dev` | `devvm` |
+
+It only exists **during the build**. `scripts/90-cleanup.sh` locks it before the image is
+exported, because it is published here and would otherwise be in every VM cloned from the
+image. A finished image has no usable password at all; each VM gets its own from
+`Set-AgentVMPassword.ps1`, which `New-AgentVM.ps1` calls. To get into a VM that never got
+one, use SSH with your key, or run `..\Set-AgentVMPassword.ps1`.
 
 Change it by regenerating the hash and overriding the variable:
 

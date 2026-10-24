@@ -82,7 +82,7 @@ Reserve ~12 GB for Windows itself and headroom. That leaves ~52 GB for guests.
 | Android | cmdline-tools, platform-tools, build-tools, one platform (e.g. API 35), one x86_64 system image (Google APIs), pre-created AVD, `/dev/kvm` access for the `dev` user (`kvm` group) |
 | Web | Chrome and Chromium, Playwright with the Chromium/Firefox/WebKit builds baked in |
 | Agent | Claude Code, Android MCP server (e.g. `mobile-mcp`), the Claude in Chrome extension force-installed into Chrome, shared `~/.claude/` config and global `CLAUDE.md` conventions |
-| Access | `dev` user with your SSH public key, sudo NOPASSWD, RDP password set by cloud-init |
+| Access | `dev` user with your SSH public key, sudo NOPASSWD, RDP password set over SSH after boot and kept on the host in Credential Manager |
 | Project | Cloned after boot over SSH, with the host's `gh` token or an interactive GitHub login, then `npm install`; project-specific env in `~/.env` |
 
 ### Emulator configuration
@@ -269,10 +269,8 @@ users:
     shell: /bin/bash
     ssh_authorized_keys:
       - ${SSH_PUBKEY}
-chpasswd:
-  list: |
-    dev:${RDP_PASSWORD}
-  expire: false
+# No password: this file stays attached and readable inside the guest. New-AgentVM.ps1 sets
+# it over SSH after boot, through Set-AgentVMPassword.ps1, which also starts the agent desktop.
 write_files:
   - path: /home/dev/.env
     owner: dev:dev
@@ -291,7 +289,7 @@ runcmd:
   # Emulator only when no phone is assigned to this VM
   - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1 &) || true'
   - sudo -u dev bash -lc '[ -z "${DEVICE_SERIAL}" ] && (unset ADB_SERVER_SOCKET; sleep 20 && adb wait-for-device) || true'
-  - sudo -u dev tmux new -d -s agent -c /home/dev/app
+  # No tmux here: the agent desktop opens the `agent` session itself, with a display.
 ```
 
 `New-AgentVM.ps1` takes an optional `-DeviceSerial` parameter; when set, the VM is created with less RAM (6 GB) and the emulator is skipped.
@@ -318,7 +316,7 @@ Keep an Ansible inventory of live VMs (`app-foo ansible_host=192.168.1.51`, …)
 - **No GPU acceleration** in the guests; the emulator uses SwiftShader. Fine for RN UI, slow for heavy 3D/games — use physical devices for those (§12–13).
 - **Dynamic Memory and checkpoints** must be off on nested-virt VMs; plan RAM statically.
 - **One hypervisor per host**: Hyper-V and VirtualBox/VMware won't coexist at full speed.
-- **Secrets**: nothing credential-shaped goes into the golden image or onto the seed ISO, which stays attached and readable inside the guest. Logins are handed to each VM over SSH after boot by `New-AgentVM.ps1`, or done by hand in the guest; anything else a project needs is injected by cloud-init into `~/.env`.
+- **Secrets**: nothing credential-shaped goes into the golden image or onto the seed ISO, which stays attached and readable inside the guest - not even the RDP password, and the image's build password is locked before export. The password and the logins are handed to each VM over SSH after boot by `New-AgentVM.ps1`, or done by hand in the guest; anything else a project needs is injected by cloud-init into `~/.env`.
 - **Differencing disks** depend on the parent — never modify or delete the golden `.vhdx` while children exist; build a new golden file for upgrades and migrate.
 
 ---

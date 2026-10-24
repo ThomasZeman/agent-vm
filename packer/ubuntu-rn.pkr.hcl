@@ -76,13 +76,15 @@ variable "ssh_timeout" {
 variable "dev_password_hash" {
   type = string
   # SHA-512 crypt of the CONSOLE password for the dev user - default plaintext is "devvm".
-  # This only ever matters at the Hyper-V console (Ctrl+Alt+F2 during a build, or a login
-  # prompt on a wedged VM): SSH is key-only, since the autoinstall sets ssh.allow-pw: false.
+  # It only exists DURING the build, for the Hyper-V console (Ctrl+Alt+F2 on a hung
+  # build): SSH is key-only, since the autoinstall sets ssh.allow-pw: false, and
+  # 90-cleanup.sh locks the password before the image is exported, so no VM cloned from it
+  # has a password until Set-AgentVMPassword.ps1 gives it one.
   # A known default is deliberate - the previous one had no recorded plaintext, which is
   # exactly why a broken build could not be logged into to debug.
   #   Change it with:  openssl passwd -6
   #   then pass -var "dev_password_hash=<hash>" or edit this default.
-  description = "SHA-512 crypt hash of the dev console password. Default plaintext: devvm."
+  description = "SHA-512 crypt hash of the dev console password during the build. Default plaintext: devvm. Locked before export."
   default     = "$6$devvmsalt$GiZ0v.02kBs634mGUoPSfSZvj6o1VqntatWSQsOG7oAoywqLTvd5zMLBfAp.vQcwb5osyEazd.9ZzY1vtYI8X1"
 }
 
