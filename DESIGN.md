@@ -408,6 +408,14 @@ The `.rdp` file is written with lossless settings: 32-bit colour, no compression
 so one pixel of the guest is one pixel on my screen. Together with the password in Credential Manager it opens the
 agent desktop without a dialog.
 
+The agent desktop has a fixed size, 1920x1080 unless `-RdpResolution` says otherwise, and refuses to be resized
+(`AcceptSetDesktopSize=0`, section 6). Without that, xrdp resizes it to whatever size the client asks for and keeps
+that size after the client disconnects, so a full-screen connection from a 4K monitor would leave the agent working at
+3840x2160. The `.rdp` file therefore opens a window of exactly that size: mstsc opened full screen always asks for the
+monitor's size, and xrdp would draw the desktop into a corner of a 4K frame. With smart sizing on and dynamic
+resolution off, maximizing the window or choosing **Full screen** from its window menu (Ctrl+Alt+Break) scales the
+1920x1080 picture up instead, exactly 2x on a 4K screen. At the window's own size it is still one pixel for one.
+
 ## 6. The agent desktop and remote access
 
 ### The problem
@@ -446,7 +454,7 @@ The pieces:
 | Piece | Purpose |
 | --- | --- |
 | `/etc/tigervnc/vncserver.users` | `:1=dev` |
-| `~/.vnc/config` | XFCE, 1920x1080 (resized to the RDP client's size), loopback only, VNC password |
+| `~/.vnc/config` | XFCE, 1920x1080 by default (`-RdpResolution` rewrites it on first boot), `AcceptSetDesktopSize=0` so RDP cannot resize it, loopback only, VNC password |
 | `tigervncserver@:1.service.d/10-agent-vm.conf` | `ConditionPathExists=/home/dev/.vnc/passwd`, so the unit is skipped, not failed, until the VM has a password |
 | `[Agent]` in `/etc/xrdp/xrdp.ini` | `libvnc.so` to `127.0.0.1:5901`, before `[Xorg]` |
 | `~/.config/autostart/agent-terminal.desktop` | `xfce4-terminal` running `tmux new-session -A -s agent -c ~/app` |

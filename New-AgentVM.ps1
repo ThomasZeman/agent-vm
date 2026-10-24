@@ -52,7 +52,8 @@
 .PARAMETER ClaudeTokenPath
     Where the long-lived Claude token is cached on this host. Defaults to
     ~\.agent-vm\claude-oauth-token. Created on first use from `claude setup-token` (a browser
-    login against your Claude subscription - no API key, no per-token billing), restricted to
+    login against your Claude subscription - no API key, no per-token billing), which you run
+    in a separate non-elevated terminal and paste back when asked. Restricted to
     your account with icacls, and reused for every VM after that. Delete the file to forget it.
 
 .PARAMETER Memory
@@ -71,6 +72,12 @@
     task needs it: `~/bin/emu -snapshot golden`, a few seconds from the golden snapshot. It
     holds 2 to 4 GB of the VM's RAM while it runs, which a web-only project does not need.
     Not with -DeviceSerial.
+
+.PARAMETER RdpResolution
+    Size of the agent desktop, as WIDTHxHEIGHT. Default 1920x1080. It is fixed: an RDP client
+    cannot resize it, so the agent always works at this size. The .rdp file opens it in a
+    window of the same size; maximize the window or choose Full screen from its window menu
+    (Ctrl+Alt+Break) and mstsc scales the picture to fit, e.g. 2x on a 4K screen.
 
 .PARAMETER Root
     Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -GoldenVhdx and
@@ -138,6 +145,9 @@ param(
     [string]$OscdimgPath = 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe',
 
     [string]$RdpOutputDirectory = $PWD.Path,
+
+    [ValidatePattern('^\d{3,5}x\d{3,5}$')]
+    [string]$RdpResolution = '1920x1080',
 
     # Seconds to wait for the guest to report a DHCP address.
     [int]$IpTimeoutSeconds = 180
@@ -299,8 +309,9 @@ function Get-HostClaudeToken {
         Returns @{ Token; Created } or $null. Created is $true when the token was minted
         just now, so the caller does not ask "use it?" straight after "create it?".
 
-        `claude setup-token` is a full-screen interactive flow (browser login, then a code
-        to paste), so it runs uncaptured in this window and the operator pastes the result.
+        `claude setup-token` is not run from here: this session is elevated, and run inline
+        from the elevated console it sat idle and took no keyboard input. The operator runs
+        it in a normal terminal and pastes the result.
     #>
     param([Parameter(Mandatory)][string]$Path)
 
@@ -310,26 +321,23 @@ function Get-HostClaudeToken {
         Write-Warning "$Path does not look like a Claude token (expected sk-ant-...); ignoring it."
     }
 
-    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-        Write-Note "no cached token at $Path and no `claude` on PATH; the VM will need /login by hand."
-        return $null
-    }
-
     Write-Note "No cached token at $Path."
     Write-Note '`claude setup-token` mints a long-lived token for your Claude *subscription* - not an API'
-    Write-Note 'key, nothing billed per token. It opens a browser login on this host and prints the token;'
-    Write-Note "paste it back here. It is then cached at $Path for every later VM."
-    if (-not (Read-YesNo -Question '  Run `claude setup-token` now?')) { return $null }
+    Write-Note 'key, nothing billed per token. Run it in a separate, NON-elevated terminal (it does not work'
+    Write-Note 'from an admin console), finish the browser login there, and paste the token it prints back'
+    Write-Note "here. It is then cached at $Path for every later VM."
+    if (-not (Read-YesNo -Question '  Paste a token now?')) { return $null }
 
     Write-Host ''
-    & claude setup-token
-    Write-Host ''
-
-    $secure = Read-Host '  Paste the token it printed (sk-ant-oat01-...)' -AsSecureString
+    $secure = Read-Host '  Paste the token from `claude setup-token` (sk-ant-oat01-...; empty to skip)' -AsSecureString
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try { $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr).Trim() }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 
+    if (-not $token) {
+        Write-Note 'Skipped; the VM will need /login by hand.'
+        return $null
+    }
     if ($token -notmatch '^sk-ant-[A-Za-z0-9_-]+$') {
         Write-Warning 'That does not look like a Claude token; skipping the Claude login for this VM.'
         return $null
@@ -665,6 +673,10 @@ runcmd:
   # An image from before the agent desktop has no vncpasswd; it gets the old detached tmux
   # session instead, which has no display.
   - [sudo, -u, dev, bash, -c, 'command -v vncpasswd >/dev/null || tmux new -d -s agent -c /home/dev/app']
+  # The agent desktop's fixed size (-RdpResolution). The desktop has not started yet: that
+  # waits for Set-AgentVMPassword.ps1, which runs after cloud-init. AcceptSetDesktopSize is
+  # in images built since; added here for older ones, so RDP cannot resize the desktop.
+  - [sudo, -u, dev, bash, -c, 'f=/home/dev/.vnc/config; [ -f $f ] || exit 0; sed -i -E "s/^geometry=.*/geometry=${RDP_RESOLUTION}/" $f; grep -q "^AcceptSetDesktopSize" $f || echo AcceptSetDesktopSize=0 >> $f']
   # No emulator here. It used to start from runcmd, which only ever happens on the first
   # boot, and headless, since nothing here has a display. With -StartEmulator it is in the
   # agent desktop's autostart instead (write_files above): every boot, as a window.
@@ -849,6 +861,7 @@ $substitutions = [ordered]@{
     '${SSH_PUBKEY}'        = $sshPublicKey
     '${ADB_SERVER_SOCKET}' = $adbServerSocket
     '${DEVICE_SERIAL}'     = $DeviceSerial
+    '${RDP_RESOLUTION}'    = $RdpResolution.ToLowerInvariant()
     '${INSTANCE}'          = [guid]::NewGuid().ToString('N').Substring(0, 8)
 }
 
@@ -901,15 +914,25 @@ if (-not $ip) {
 
 # ------------------------------------------------------------- .rdp file ---
 
-# Lossless settings (DESIGN.md, section 6): 32-bit colour, no compression, smart sizing off,
-# so one guest pixel maps to one host pixel.
+# Lossless settings (DESIGN.md, section 6): 32-bit colour, no compression, 100% scaling.
+#
+# The agent desktop has a fixed size (-RdpResolution) and refuses to be resized, so the
+# connection has to ask for exactly that size. mstsc only does so in a window: opened full
+# screen it always asks for the monitor's size, and xrdp then draws the desktop into a corner
+# of a 4K frame. In a window, smart sizing scales the picture when the window is maximized or
+# switched to full screen, and dynamic resolution off keeps the session size fixed meanwhile.
+# At the window's own size, one guest pixel is still one host pixel.
+$width, $height = $RdpResolution.ToLowerInvariant() -split 'x'
 $rdpPath = Join-Path $RdpOutputDirectory "$Name.rdp"
 $rdpContent = @"
 full address:s:$ip
 username:s:dev
 prompt for credentials:i:0
-screen mode id:i:2
-smart sizing:i:0
+screen mode id:i:1
+desktopwidth:i:$width
+desktopheight:i:$height
+smart sizing:i:1
+dynamic resolution:i:0
 desktopscalefactor:i:100
 session bpp:i:32
 connection type:i:6

@@ -111,6 +111,12 @@ echo "==> The agent desktop: one XFCE session on :1 that exists from boot"
 # boot as dev on :1, bound to loopback only, and the [Agent] entry in xrdp.ini below makes
 # RDP attach to that same display instead of creating one. Closing the RDP window leaves the
 # desktop, the agent and its browser running.
+#
+# AcceptSetDesktopSize=0: the desktop keeps its geometry whatever connects. Otherwise xrdp
+# resizes it to the client's window - a full-screen 4K client leaves the agent working at
+# 3840x2160 after it disconnects. The .rdp file asks for the same size and lets mstsc
+# scale it (smart sizing) for a bigger screen. New-AgentVM.ps1 -RdpResolution rewrites the
+# geometry line on first boot.
 echo ":1=dev" | sudo tee /etc/tigervnc/vncserver.users >/dev/null
 mkdir -p "$HOME/.vnc" "$HOME/app"
 cat > "$HOME/.vnc/config" <<'VNC'
@@ -120,6 +126,7 @@ depth=24
 localhost=yes
 SecurityTypes=VncAuth
 alwaysshared
+AcceptSetDesktopSize=0
 VNC
 
 # The VNC password is per VM, so it is not in the image: New-AgentVM.ps1 writes ~/.vnc/passwd

@@ -229,6 +229,7 @@ It refuses to overwrite an image that any VM still uses as its parent. An upgrad
 | `-RdpPassword` | generated | At most 8 letters, digits or `!#%+,./:=?@^_~-` |
 | `-OscdimgPath` | the Windows ADK path | Builds `seed.iso` |
 | `-RdpOutputDirectory` | current directory | Where `<Name>.rdp` is written |
+| `-RdpResolution` | `1920x1080` | Fixed size of the agent desktop; the `.rdp` window scales it when maximized or full screen (Ctrl+Alt+Break) |
 | `-IpTimeoutSeconds` | 180 | How long to wait for an address |
 
 If no address arrives in time, the VM keeps running without a password, and the script prints the
