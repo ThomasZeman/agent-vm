@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    Prints the RDP password of a dev VM created by New-DevVM.ps1.
+    Prints the RDP password of a dev VM created by New-AgentVM.ps1.
 
 .DESCRIPTION
-    New-DevVM.ps1 shows the generated password exactly once. It is not lost after that: the
+    New-AgentVM.ps1 shows the generated password exactly once. It is not lost after that: the
     cloud-init seed ISO the VM booted from stays in the project folder for the life of the
     VM, and its user-data carries the password in plain text (a chpasswd entry). This script
     reads it back from there.
 
-    If Set-DevVMPassword.ps1 has changed the password since, the ISO is stale. That script
+    If Set-AgentVMPassword.ps1 has changed the password since, the ISO is stale. That script
     records the new value in rdp-password.txt next to the ISO, and this one prefers that
     file when it exists.
 
@@ -20,24 +20,24 @@
     No Administrator rights needed: only files under the project folder are read.
 
 .PARAMETER Name
-    Project / VM name, e.g. app-foo. The same value passed to New-DevVM.ps1.
+    Project / VM name, e.g. app-foo. The same value passed to New-AgentVM.ps1.
 
 .PARAMETER Root
-    Where images and VMs live. Defaults to $env:DEVVM_ROOT, else C:\Hyper-V. -VmRoot derives
-    from it, and must be the same root New-DevVM.ps1 built the VM under.
+    Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -VmRoot derives
+    from it, and must be the same root New-AgentVM.ps1 built the VM under.
 
 .PARAMETER User
-    Guest account to look up. Default dev, the only account New-DevVM.ps1 creates.
+    Guest account to look up. Default dev, the only account New-AgentVM.ps1 creates.
 
 .OUTPUTS
     The password, as a plain string on the pipeline. Everything else goes to the host
     stream, so piping into Set-Clipboard copies just the password.
 
 .EXAMPLE
-    .\Get-DevVMPassword.ps1 -Name app-foo
+    .\Get-AgentVMPassword.ps1 -Name app-foo
 
 .EXAMPLE
-    .\Get-DevVMPassword.ps1 -Name app-foo | Set-Clipboard
+    .\Get-AgentVMPassword.ps1 -Name app-foo | Set-Clipboard
 #>
 
 [CmdletBinding()]
@@ -46,7 +46,7 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]{0,30}$')]
     [string]$Name,
 
-    [string]$Root = $(if ($env:DEVVM_ROOT) { $env:DEVVM_ROOT } else { 'C:\Hyper-V' }),
+    [string]$Root = $(if ($env:AGENTVM_ROOT) { $env:AGENTVM_ROOT } else { 'C:\Hyper-V' }),
 
     [string]$VmRoot = [IO.Path]::Combine($Root, 'vms'),
 
@@ -64,7 +64,7 @@ if (-not (Test-Path -LiteralPath $vmPath)) {
     throw "No project folder for '$Name' at $vmPath. Check -Name, or -Root if the VMs live on another drive."
 }
 
-# Written by Set-DevVMPassword.ps1; newer than anything on the ISO.
+# Written by Set-AgentVMPassword.ps1; newer than anything on the ISO.
 $recordPath = Join-Path $vmPath 'rdp-password.txt'
 if (Test-Path -LiteralPath $recordPath) {
     $recorded = (Get-Content -LiteralPath $recordPath -Raw).Trim()
@@ -76,21 +76,21 @@ if (Test-Path -LiteralPath $recordPath) {
 
 $seedIso = Join-Path $vmPath 'seed.iso'
 if (-not (Test-Path -LiteralPath $seedIso)) {
-    throw "No seed ISO at $seedIso, so the original password cannot be recovered. Set a new one: .\Set-DevVMPassword.ps1 -Name $Name"
+    throw "No seed ISO at $seedIso, so the original password cannot be recovered. Set a new one: .\Set-AgentVMPassword.ps1 -Name $Name"
 }
 
 # Latin-1 maps every byte to exactly one char, so the ASCII text survives intact.
 $bytes = [IO.File]::ReadAllBytes($seedIso)
 $text = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
 
-# The chpasswd block New-DevVM.ps1 renders:
+# The chpasswd block New-AgentVM.ps1 renders:
 #     chpasswd:
 #       list: |
 #         dev:<password>
 $pattern = '(?m)^chpasswd:\r?\n\s+list:\s*\|\r?\n\s+' + [regex]::Escape($User) + ':([^\r\n]+)'
 $match = [regex]::Match($text, $pattern)
 if (-not $match.Success) {
-    throw "No chpasswd entry for '$User' found in $seedIso. Was this VM created by New-DevVM.ps1?"
+    throw "No chpasswd entry for '$User' found in $seedIso. Was this VM created by New-AgentVM.ps1?"
 }
 
 Write-Note "from $seedIso (as set at creation)"

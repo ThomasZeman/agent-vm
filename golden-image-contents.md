@@ -1,6 +1,6 @@
 # What ships with the golden image
 
-Contents of `golden-ubuntu-rn.vhdx` — the image `New-DevVM.ps1` clones with a differencing
+Contents of `golden-ubuntu-rn.vhdx` — the image `New-AgentVM.ps1` clones with a differencing
 disk. This describes the **artifact**; `packer/README.md` describes how to build it and
 `runbook.md` describes how to drive a VM once it exists.
 
@@ -28,7 +28,7 @@ Base packages from the autoinstall: `openssh-server`, `curl`, `ca-certificates`,
 
 `linux-cloud-tools-virtual` is not optional — it provides `hv_kvp_daemon`, which is how the
 guest reports its IP back to Hyper-V. Without it `Get-VMNetworkAdapter` shows no address and
-both Packer and `New-DevVM.ps1` wait out their timeouts on a VM that was reachable the whole
+both Packer and `New-AgentVM.ps1` wait out their timeouts on a VM that was reachable the whole
 time.
 
 ## 2. Desktop and remote access
@@ -262,7 +262,7 @@ emulator restarts; with nothing running it simply has nothing to forward.
 - **`~/shots/`**, created empty, for screenshots.
 
 **No credentials ship in the image.** It is shared by every project VM, so it must be
-login-free. Each VM is logged in after boot, over SSH: `New-DevVM.ps1` writes a
+login-free. Each VM is logged in after boot, over SSH: `New-AgentVM.ps1` writes a
 `claude setup-token` subscription token into that guest's `~/.claude/settings.json` when
 asked to, or you run a one-off interactive `/login` there. Either way the token stays in
 that one guest's `~/.claude`.
@@ -289,7 +289,7 @@ section 3.
 | `xrdp` | 3389 | XFCE desktop |
 | `adb-bridge` | 5555 **on the LAN address only** | publishes the emulator's loopback adb port; loopback:5555 stays free for the emulator itself |
 
-Not enabled: the emulator itself and Metro. `New-DevVM.ps1` starts those per VM through
+Not enabled: the emulator itself and Metro. `New-AgentVM.ps1` starts those per VM through
 cloud-init `runcmd`, in a `tmux` session.
 
 ## 9. Home directory layout
@@ -323,7 +323,7 @@ all — anything machine-specific left behind is duplicated into every child VM.
 | `~/.android/cache`, `adbkey`, `adbkey.pub` | per-machine adb identity |
 
 Also added by cleanup: `/etc/cloud/cloud.cfg.d/99-nocloud.cfg` pinning
-`datasource_list: [NoCloud, None]`, so clones probe only the seed `New-DevVM.ps1` attaches
+`datasource_list: [NoCloud, None]`, so clones probe only the seed `New-AgentVM.ps1` attaches
 instead of walking every datasource cloud-init knows. This is done here rather than in the
 autoinstall on purpose — pinning it earlier redirects the installer's own first-boot run to
 the autoinstall CD, which creates no user, and the image ends up with no `dev` account at all.
@@ -339,7 +339,7 @@ happens once per guest and stays there.
 **No git or GitHub identity of any kind**, deliberately: no `known_hosts` entry for
 github.com, no deploy key, no token, and no `git config` user. The `gh` binary is installed
 (section 4) but logged into nothing. The image is shared by every project VM, so anything
-more would be a credential handed to all of them. `New-DevVM.ps1` logs `gh` in inside a
+more would be a credential handed to all of them. `New-AgentVM.ps1` logs `gh` in inside a
 single guest, after boot, only when asked — fed the host's own token over SSH stdin, or
 through an interactive `gh auth login` — and never writes a credential to the seed ISO,
 which stays attached to the VM and readable from inside it.

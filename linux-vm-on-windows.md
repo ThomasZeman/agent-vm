@@ -51,7 +51,7 @@ PowerShell scripts and their parameters).
      vms\<project>\disk.vhdx          # differencing disk per project
      vms\<project>\seed.iso           # cloud-init NoCloud seed
    ```
-   The scripts take this root as `-Root` (default `$env:DEVVM_ROOT`, else `C:\Hyper-V`), so a
+   The scripts take this root as `-Root` (default `$env:AGENTVM_ROOT`, else `C:\Hyper-V`), so a
    machine with a fast second drive can put the whole tree on it without editing anything.
 5. **Tools on the host**: Packer, PowerShell 7, `oscdimg` (from Windows ADK, for building seed ISOs), Android platform-tools (for `adb connect`), optionally Android Studio (Layout Inspector), optionally `scrcpy`.
 
@@ -170,7 +170,7 @@ With these settings, each guest pixel maps to one host pixel and colours are tra
 
 ## 7. Claude Code in each VM
 
-- Installed globally in the golden image, with no credentials in it, along with the Claude Code extension for VS Code so the agent is usable from the RDP desktop as well as from a shell. Authentication is per VM, against your Claude subscription: `New-DevVM.ps1` offers to hand over a long-lived `claude setup-token` token over SSH after boot, into the guest's `~/.claude/settings.json`, or you run a one-off interactive `/login` in the guest. Either way the token lands in that guest's `~/.claude/` and survives reboots. (An API key injected per VM by cloud-init was the alternative considered — but it bills per token instead of using the subscription, and the seed ISO stays attached and readable inside the guest.)
+- Installed globally in the golden image, with no credentials in it, along with the Claude Code extension for VS Code so the agent is usable from the RDP desktop as well as from a shell. Authentication is per VM, against your Claude subscription: `New-AgentVM.ps1` offers to hand over a long-lived `claude setup-token` token over SSH after boot, into the guest's `~/.claude/settings.json`, or you run a one-off interactive `/login` in the guest. Either way the token lands in that guest's `~/.claude/` and survives reboots. (An API key injected per VM by cloud-init was the alternative considered — but it bills per token instead of using the subscription, and the seed ISO stays attached and readable inside the guest.)
 - **Android MCP server** configured in `~/.claude/` so the agent has tools such as `take_screenshot`, `list_elements_on_screen`, `tap_element`, `type_text`, `swipe`. This is far more reliable than raw `adb shell input tap x y`.
 - A global `CLAUDE.md` in the image covers shared conventions: how to start the emulator, how to reload Metro, where to save screenshots, the verification loop (build → reload → screenshot → inspect → act).
 - Each project's repo adds its own `CLAUDE.md` for app-specific context.
@@ -220,12 +220,12 @@ source "hyperv-iso" "ubuntu" {
 
 Output: `C:\Hyper-V\golden\golden-ubuntu-rn.vhdx`. Treat it as immutable.
 
-### 8.2 Per-project clone: `New-DevVM.ps1`
+### 8.2 Per-project clone: `New-AgentVM.ps1`
 
 Usage:
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo you/foo -Memory 10GB -Cpus 4
+.\New-AgentVM.ps1 -Name app-foo -Repo you/foo -Memory 10GB -Cpus 4
 ```
 
 What it does:
@@ -255,7 +255,7 @@ What it does:
    # poll Get-VMNetworkAdapter -VMName $Name | select -expand IPAddresses
    ```
 
-Companion `Remove-DevVM.ps1 -Name app-foo` stops the VM, removes it, and deletes the project folder.
+Companion `Remove-AgentVM.ps1 -Name app-foo` stops the VM, removes it, and deletes the project folder.
 
 ### 8.3 cloud-init `user-data` template
 
@@ -294,7 +294,7 @@ runcmd:
   - sudo -u dev tmux new -d -s agent -c /home/dev/app
 ```
 
-`New-DevVM.ps1` takes an optional `-DeviceSerial` parameter; when set, the VM is created with less RAM (6 GB) and the emulator is skipped.
+`New-AgentVM.ps1` takes an optional `-DeviceSerial` parameter; when set, the VM is created with less RAM (6 GB) and the emulator is skipped.
 
 ### 8.4 Keeping running VMs in sync (optional)
 
@@ -304,7 +304,7 @@ Keep an Ansible inventory of live VMs (`app-foo ansible_host=192.168.1.51`, …)
 
 ## 9. Daily workflow
 
-1. `.\New-DevVM.ps1 -Name app-bar -Repo …` — VM up in ~2 minutes, emulator already running from snapshot.
+1. `.\New-AgentVM.ps1 -Name app-bar -Repo …` — VM up in ~2 minutes, emulator already running from snapshot.
 2. `ssh dev@<ip> -t tmux attach` → start Claude Code on the task.
 3. Claude builds, reloads Metro, screenshots, inspects, taps — via the MCP server — and saves PNGs to `~/shots/`.
 4. When you want to check: double-click `app-bar.rdp`, look at the emulator window at 1:1, use the RN inspector for numbers; open a PNG at 100 % and eyedropper anything where the exact hex matters.
@@ -318,7 +318,7 @@ Keep an Ansible inventory of live VMs (`app-foo ansible_host=192.168.1.51`, …)
 - **No GPU acceleration** in the guests; the emulator uses SwiftShader. Fine for RN UI, slow for heavy 3D/games — use physical devices for those (§12–13).
 - **Dynamic Memory and checkpoints** must be off on nested-virt VMs; plan RAM statically.
 - **One hypervisor per host**: Hyper-V and VirtualBox/VMware won't coexist at full speed.
-- **Secrets**: nothing credential-shaped goes into the golden image or onto the seed ISO, which stays attached and readable inside the guest. Logins are handed to each VM over SSH after boot by `New-DevVM.ps1`, or done by hand in the guest; anything else a project needs is injected by cloud-init into `~/.env`.
+- **Secrets**: nothing credential-shaped goes into the golden image or onto the seed ISO, which stays attached and readable inside the guest. Logins are handed to each VM over SSH after boot by `New-AgentVM.ps1`, or done by hand in the guest; anything else a project needs is injected by cloud-init into `~/.env`.
 - **Differencing disks** depend on the parent — never modify or delete the golden `.vhdx` while children exist; build a new golden file for upgrades and migrate.
 
 ---

@@ -7,7 +7,7 @@ packer/packer.log
 # var files can carry the real password hash / key paths
 packer/*.pkrvars.hcl
 
-# Generated per-VM files. New-DevVM.ps1 writes <name>.rdp into $PWD, which is wherever it
+# Generated per-VM files. New-AgentVM.ps1 writes <name>.rdp into $PWD, which is wherever it
 # was invoked from - the repo root, packer/, anywhere - so this is not path-anchored.
 *.rdp
 

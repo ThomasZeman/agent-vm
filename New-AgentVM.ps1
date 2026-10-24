@@ -48,7 +48,7 @@
 
 .PARAMETER ClaudeTokenPath
     Where the long-lived Claude token is cached on this host. Defaults to
-    ~\.devvm\claude-oauth-token. Created on first use from `claude setup-token` (a browser
+    ~\.agent-vm\claude-oauth-token. Created on first use from `claude setup-token` (a browser
     login against your Claude subscription - no API key, no per-token billing), restricted to
     your account with icacls, and reused for every VM after that. Delete the file to forget it.
 
@@ -63,23 +63,23 @@
     skips the emulator and pins itself to that device through the host's adb server.
 
 .PARAMETER Root
-    Where images and VMs live. Defaults to $env:DEVVM_ROOT, else C:\Hyper-V. -GoldenVhdx and
-    -VmRoot derive from it; set DEVVM_ROOT once (machine scope) to move everything to another
-    drive. Must match the -Root used by Build-GoldenImage.ps1 and Remove-DevVM.ps1.
+    Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -GoldenVhdx and
+    -VmRoot derive from it; set AGENTVM_ROOT once (machine scope) to move everything to another
+    drive. Must match the -Root used by Build-GoldenImage.ps1 and Remove-AgentVM.ps1.
 
 .PARAMETER HostIp
     Address of the Windows host on the DevSwitch subnet, used for ADB_SERVER_SOCKET.
     Only meaningful together with -DeviceSerial.
 
 .EXAMPLE
-    .\New-DevVM.ps1 -Name app-foo -Repo you/foo
+    .\New-AgentVM.ps1 -Name app-foo -Repo you/foo
     Asks whether to copy the GitHub and Claude logins, builds the VM, clones the project.
 
 .EXAMPLE
-    .\New-DevVM.ps1 -Name app-game -Repo you/game -DeviceSerial 3A9X0T2K -HostIp 192.168.1.10
+    .\New-AgentVM.ps1 -Name app-game -Repo you/game -DeviceSerial 3A9X0T2K -HostIp 192.168.1.10
 
 .EXAMPLE
-    .\New-DevVM.ps1 -Name app-scratch -SkipGitHubLogin -SkipClaudeLogin
+    .\New-AgentVM.ps1 -Name app-scratch -SkipGitHubLogin -SkipClaudeLogin
     Empty ~/app, no credentials, no prompts.
 #>
 
@@ -98,7 +98,7 @@ param(
 
     [switch]$SkipClaudeLogin,
 
-    [string]$ClaudeTokenPath = "$HOME\.devvm\claude-oauth-token",
+    [string]$ClaudeTokenPath = "$HOME\.agent-vm\claude-oauth-token",
 
     [int64]$Memory,
 
@@ -109,7 +109,7 @@ param(
 
     [string]$HostIp,
 
-    [string]$Root = $(if ($env:DEVVM_ROOT) { $env:DEVVM_ROOT } else { 'C:\Hyper-V' }),
+    [string]$Root = $(if ($env:AGENTVM_ROOT) { $env:AGENTVM_ROOT } else { 'C:\Hyper-V' }),
 
     [string]$GoldenVhdx = [IO.Path]::Combine($Root, 'golden', 'golden-ubuntu-rn.vhdx'),
 
@@ -333,7 +333,7 @@ function Initialize-GuestSetup {
     <#
         Everything the post-boot steps share: the OpenSSH client, sshd answering, a clean
         known_hosts entry, cloud-init finished, and the setup script in /tmp. Returns $true
-        when the guest is ready for `bash /tmp/devvm-setup.sh ...`.
+        when the guest is ready for `bash /tmp/agentvm-setup.sh ...`.
     #>
     param([Parameter(Mandatory)][string]$IpAddress, [Parameter(Mandatory)][string]$SetupScript)
 
@@ -361,11 +361,11 @@ function Initialize-GuestSetup {
 
     # Shipped by scp rather than piped into `bash -s`: PowerShell would terminate the piped
     # string with CRLF and bash treats the stray \r as part of the last command.
-    $localScript = Join-Path ([IO.Path]::GetTempPath()) ('devvm-setup-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.sh')
+    $localScript = Join-Path ([IO.Path]::GetTempPath()) ('agentvm-setup-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.sh')
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($localScript, ($SetupScript -replace "`r`n", "`n"), $utf8NoBom)
     try {
-        & scp @script:SshOpts $localScript "${target}:/tmp/devvm-setup.sh"
+        & scp @script:SshOpts $localScript "${target}:/tmp/agentvm-setup.sh"
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Could not copy the setup script to the guest (scp exit $LASTEXITCODE); skipping the post-boot setup."
             return $false
@@ -391,7 +391,7 @@ function Invoke-GuestCredentialHandoff {
     # Encoding is $OutputEncoding, set at the top of the script. Windows PowerShell also
     # puts a UTF-8 BOM in front of the first line and CRLF after the last, whatever the
     # encoding says; the guest strips both.
-    $text | & ssh @script:SshOpts "dev@$IpAddress" 'bash /tmp/devvm-setup.sh credentials'
+    $text | & ssh @script:SshOpts "dev@$IpAddress" 'bash /tmp/agentvm-setup.sh credentials'
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "The credential hand-off exited $LASTEXITCODE - see the output above. The VM may need its logins done by hand."
         return $false
@@ -409,7 +409,7 @@ function Invoke-GuestClone {
 
     # -t forces a TTY: without it gh sees a non-interactive stdin and refuses to prompt,
     # and npm's progress output is nicer with one either way.
-    & ssh @script:SshOpts -t "dev@$IpAddress" "bash /tmp/devvm-setup.sh clone '$Repo'"
+    & ssh @script:SshOpts -t "dev@$IpAddress" "bash /tmp/agentvm-setup.sh clone '$Repo'"
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "The guest clone step exited $LASTEXITCODE - see the output above. ~/app may be empty or partially set up."
         return $false
@@ -463,7 +463,7 @@ if (-not (Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue)) {
 }
 
 if (Get-VM -Name $Name -ErrorAction SilentlyContinue) {
-    throw "A VM named '$Name' already exists. Remove it with .\Remove-DevVM.ps1 -Name $Name first."
+    throw "A VM named '$Name' already exists. Remove it with .\Remove-AgentVM.ps1 -Name $Name first."
 }
 
 $vmPath = Join-Path $VmRoot $Name
@@ -604,7 +604,7 @@ write_files:
     permissions: '0600'
     content: |
       # No credentials here - this file comes off the seed ISO, which stays attached to the
-      # VM. Claude Code's subscription token, if New-DevVM.ps1 handed one over after boot,
+      # VM. Claude Code's subscription token, if New-AgentVM.ps1 handed one over after boot,
       # is in ~/.claude/settings.json; otherwise run `claude` and /login once.
       PROJECT=${NAME}
       # Physical device mode (section 12). An empty ANDROID_SERIAL means the emulator.
@@ -647,7 +647,7 @@ instance-id: ${NAME}-${INSTANCE}
 local-hostname: ${NAME}
 '@
 
-# Copied to /tmp/devvm-setup.sh in the guest once it is up, and left there so a declined or
+# Copied to /tmp/agentvm-setup.sh in the guest once it is up, and left there so a declined or
 # failed step can be re-run by hand. Two entry points:
 #
 #   credentials   KEY=value lines on stdin; no TTY. Logs gh in with the host's token, sets
@@ -660,10 +660,10 @@ local-hostname: ${NAME}
 # entry and every token - is installed per VM, at the moment someone asks for it.
 $guestSetupScript = @'
 #!/usr/bin/env bash
-# Written by New-DevVM.ps1.
-#   bash /tmp/devvm-setup.sh credentials   < KEY=value lines   (GH_TOKEN, GIT_USER_NAME,
+# Written by New-AgentVM.ps1.
+#   bash /tmp/agentvm-setup.sh credentials   < KEY=value lines   (GH_TOKEN, GIT_USER_NAME,
 #                                             GIT_USER_EMAIL, CLAUDE_CODE_OAUTH_TOKEN)
-#   bash /tmp/devvm-setup.sh clone <repo>   interactive if gh is not logged in yet
+#   bash /tmp/agentvm-setup.sh clone <repo>   interactive if gh is not logged in yet
 set -euo pipefail
 
 APP=/home/dev/app
@@ -788,8 +788,8 @@ do_clone() {
 
 case "${1:-}" in
     credentials) do_credentials ;;
-    clone)       do_clone "${2:?usage: devvm-setup.sh clone <repo>}" ;;
-    *) echo "usage: devvm-setup.sh credentials < KEY=value lines | clone <repo>" >&2; exit 2 ;;
+    clone)       do_clone "${2:?usage: agentvm-setup.sh clone <repo>}" ;;
+    *) echo "usage: agentvm-setup.sh credentials < KEY=value lines | clone <repo>" >&2; exit 2 ;;
 esac
 '@
 
@@ -956,14 +956,14 @@ if ($Repo -and $repoReady) {
     Write-Note "~/app has $Repo checked out, dependencies installed."
 }
 elseif ($Repo) {
-    Write-Note "~/app is EMPTY. To finish the checkout: ssh dev@$ip -t ""bash /tmp/devvm-setup.sh clone '$Repo'"""
+    Write-Note "~/app is EMPTY. To finish the checkout: ssh dev@$ip -t ""bash /tmp/agentvm-setup.sh clone '$Repo'"""
     Write-Note "Or clone it yourself over agent forwarding: ssh -A dev@$ip"
 }
 else {
     Write-Note '~/app is empty - no -Repo was given.'
 }
 
-Write-Note "Lost the password? .\Get-DevVMPassword.ps1 -Name $Name   (or set one: .\Set-DevVMPassword.ps1)"
+Write-Note "Lost the password? .\Get-AgentVMPassword.ps1 -Name $Name   (or set one: .\Set-AgentVMPassword.ps1)"
 if (-not $DeviceSerial) {
     Write-Note 'The emulator is still resuming from the golden snapshot; give it a few seconds.'
 }

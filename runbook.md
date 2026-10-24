@@ -12,7 +12,7 @@ parameter of the host scripts, `host-scripts.md`.
 | **[P]** | Physical phone | via adb from the host |
 
 Scripts are named, never pathed: `Build-GoldenImage.ps1` runs from `packer\`,
-`New-DevVM.ps1`, `Remove-DevVM.ps1`, `Get-DevVMPassword.ps1` and `Set-DevVMPassword.ps1`
+`New-AgentVM.ps1`, `Remove-AgentVM.ps1`, `Get-AgentVMPassword.ps1` and `Set-AgentVMPassword.ps1`
 from the directory above it.
 After any `winget install`, open a **new** elevated shell — `PATH` is only updated for
 processes started afterwards.
@@ -21,7 +21,7 @@ Paths below assume the default root `C:\Hyper-V`. To put images and VMs somewher
 it once and every script follows:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('DEVVM_ROOT', 'E:\Hyper-V', 'Machine')   # new shell after this
+[Environment]::SetEnvironmentVariable('AGENTVM_ROOT', 'E:\Hyper-V', 'Machine')   # new shell after this
 ```
 
 or pass `-Root E:\Hyper-V` to every script — the same value to all of them.
@@ -69,7 +69,7 @@ winget install Microsoft.WindowsADK           # oscdimg: builds both seed ISOs (
 **Then close the shell and open a new elevated one.** winget writes `PATH` for future
 processes only; in the current session `packer` and `adb` are still "not recognized".
 
-Verify `oscdimg` is where `New-DevVM.ps1` expects it:
+Verify `oscdimg` is where `New-AgentVM.ps1` expects it:
 
 ```powershell
 Test-Path 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe'
@@ -262,7 +262,7 @@ Remove-Item C:\Hyper-V\golden\build -Recurse -Force
 **[H]**
 
 ```powershell
-.\New-DevVM.ps1 -Name smoke
+.\New-AgentVM.ps1 -Name smoke
 ```
 
 **[G]** — `ssh dev@<vm-ip>`
@@ -277,7 +277,7 @@ node --version && java -version && claude --version
 **[H]**
 
 ```powershell
-.\Remove-DevVM.ps1 -Name smoke -Force
+.\Remove-AgentVM.ps1 -Name smoke -Force
 ```
 
 ---
@@ -287,10 +287,10 @@ node --version && java -version && claude --version
 **[H]**
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo          # offers your GitHub + Claude logins (4.2, 4.3), clones
-.\New-DevVM.ps1 -Name app-foo -Repo me/app-foo -SkipGitHubLogin -SkipClaudeLogin   # no prompts, no credentials, ~/app empty
+.\New-AgentVM.ps1 -Name app-foo -Repo me/app-foo          # offers your GitHub + Claude logins (4.2, 4.3), clones
+.\New-AgentVM.ps1 -Name app-foo -Repo me/app-foo -SkipGitHubLogin -SkipClaudeLogin   # no prompts, no credentials, ~/app empty
 # phone-backed instead of emulator:
-.\New-DevVM.ps1 -Name app-bar -Repo <repo> -DeviceSerial 1A2B3C4D -HostIp 192.168.1.10
+.\New-AgentVM.ps1 -Name app-bar -Repo <repo> -DeviceSerial 1A2B3C4D -HostIp 192.168.1.10
 ```
 
 What it executes:
@@ -331,7 +331,7 @@ Watch it: **[G]** `sudo cloud-init status --wait; sudo tail -f /var/log/cloud-in
 
 ### 4.2 GitHub login and checkout — **[H]**, once per VM
 
-Before building the VM, `New-DevVM.ps1` checks whether `gh` on the host is logged in. If it
+Before building the VM, `New-AgentVM.ps1` checks whether `gh` on the host is logged in. If it
 is, it prints the account, the token scopes and your global git identity, and asks:
 
 ```
@@ -339,7 +339,7 @@ is, it prints the account, the token scopes and your global git identity, and as
 ```
 
 Yes: once the guest answers SSH and cloud-init has finished, the script copies
-`devvm-setup.sh` to `/tmp` in the guest and pipes the token and identity to it on SSH stdin
+`agentvm-setup.sh` to `/tmp` in the guest and pipes the token and identity to it on SSH stdin
 (never as an argument, never onto the seed ISO). In the guest that runs
 `gh auth login --with-token`, `gh auth setup-git` and `git config --global user.*`; then,
 with `-Repo`, it clones into `~/app` and runs `npm install` with no further prompt. The VM
@@ -364,7 +364,7 @@ attached to the VM and is readable from inside it.
 `-SkipGitHubLogin` skips both offers and the clone. To do it later, or after answering no:
 
 ```powershell
-ssh dev@<vm-ip> -t "bash /tmp/devvm-setup.sh clone 'you/foo'"   # the script stays in the guest
+ssh dev@<vm-ip> -t "bash /tmp/agentvm-setup.sh clone 'you/foo'"   # the script stays in the guest
 ssh -A dev@<vm-ip>                                              # or clone by hand over agent forwarding
 ```
 
@@ -373,10 +373,10 @@ seeds `known_hosts` for the remote host first if the URL is SSH-form.
 
 ### 4.3 Log the agent in — **[H]** at creation, or **[G]** by hand, once per VM
 
-`New-DevVM.ps1` also offers to log Claude Code in, using a long-lived token for your Claude
+`New-AgentVM.ps1` also offers to log Claude Code in, using a long-lived token for your Claude
 **subscription** — not an API key, nothing billed per token. The token comes from
 `claude setup-token` on the host (a browser login; paste the printed token back into the
-script), and is cached at `~\.devvm\claude-oauth-token` (`-ClaudeTokenPath`), readable by
+script), and is cached at `~\.agent-vm\claude-oauth-token` (`-ClaudeTokenPath`), readable by
 your account only, for every later VM:
 
 ```
@@ -415,19 +415,19 @@ adb -s <vm-ip>:5555 exec-out screencap -p > shot.png
 Stop-VM -Name app-foo                     # graceful; VMs are cheap, keep them stopped
 ```
 
-The RDP password is printed once by `New-DevVM.ps1`. It is not secret in any useful sense —
+The RDP password is printed once by `New-AgentVM.ps1`. It is not secret in any useful sense —
 the VMs are only reachable on the local switch — so it is short, and it can be read back or
 replaced at any time:
 
 ```powershell
-.\Get-DevVMPassword.ps1 -Name app-foo                    # from the seed ISO; no elevation needed
-.\Get-DevVMPassword.ps1 -Name app-foo | Set-Clipboard
-.\Set-DevVMPassword.ps1 -Name app-foo                    # generates one, applies it over ssh, prints it
-.\Set-DevVMPassword.ps1 -Name app-foo -Password hunter2
+.\Get-AgentVMPassword.ps1 -Name app-foo                    # from the seed ISO; no elevation needed
+.\Get-AgentVMPassword.ps1 -Name app-foo | Set-Clipboard
+.\Set-AgentVMPassword.ps1 -Name app-foo                    # generates one, applies it over ssh, prints it
+.\Set-AgentVMPassword.ps1 -Name app-foo -Password hunter2
 ```
 
-`Set-DevVMPassword.ps1` records the new value in `C:\Hyper-V\vms\app-foo\rdp-password.txt`,
-which `Get-DevVMPassword.ps1` prefers over the now-stale ISO.
+`Set-AgentVMPassword.ps1` records the new value in `C:\Hyper-V\vms\app-foo\rdp-password.txt`,
+which `Get-AgentVMPassword.ps1` prefers over the now-stale ISO.
 
 **[G]**
 
@@ -452,7 +452,7 @@ adb shell wm density                      # px -> dp for spacing checks
 adb kill-server
 adb -a -P 5037 nodaemon server
 adb devices -l                            # record serials
-New-NetFirewallRule -DisplayName "adb from DevVMs" -Direction Inbound -Protocol TCP `
+New-NetFirewallRule -DisplayName "adb from agent VMs" -Direction Inbound -Protocol TCP `
     -LocalPort 5037 -RemoteAddress 192.168.1.0/24 -Action Allow
 ```
 
@@ -474,9 +474,9 @@ adb reverse tcp:8081 tcp:8081             # Metro, through the remote server
 **[H]**
 
 ```powershell
-.\Remove-DevVM.ps1 -Name app-foo                  # prompts
-.\Remove-DevVM.ps1 -Name app-foo -Force           # scripted
-.\Remove-DevVM.ps1 -Name app-foo -KeepFiles       # unregister, keep the disk
+.\Remove-AgentVM.ps1 -Name app-foo                  # prompts
+.\Remove-AgentVM.ps1 -Name app-foo -Force           # scripted
+.\Remove-AgentVM.ps1 -Name app-foo -KeepFiles       # unregister, keep the disk
 ```
 
 Runs: `Stop-VM` (graceful, then `-TurnOff` after 60 s) → `Remove-VMSnapshot` if any →
@@ -491,7 +491,7 @@ Toolchain (new SDK, Node, system image) — **[H]**, new file, never in place:
 
 ```powershell
 .\Build-GoldenImage.ps1 -GoldenPath C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
-.\New-DevVM.ps1 -Name app-foo2 -Repo <url> -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
+.\New-AgentVM.ps1 -Name app-foo2 -Repo <url> -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
 ```
 
 The old golden file must stay until its last child is removed.

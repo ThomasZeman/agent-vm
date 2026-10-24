@@ -72,12 +72,12 @@ hand; see [below](#the-installer-is-asking-me-questions).
 
 30–50 minutes, most of it the Android system image download and the emulator's first boot.
 The result is `C:\Hyper-V\golden\golden-ubuntu-rn.vhdx`, compacted and marked read-only —
-which is the default `-GoldenVhdx` in `..\New-DevVM.ps1`.
+which is the default `-GoldenVhdx` in `..\New-AgentVM.ps1`.
 
-That root is configurable. `-Root` defaults to `$env:DEVVM_ROOT`, falling back to
-`C:\Hyper-V`, and `-GoldenPath` / `-BuildDirectory` derive from it; `New-DevVM.ps1` and
-`Remove-DevVM.ps1` resolve theirs the same way. So either set the variable once
-(`[Environment]::SetEnvironmentVariable('DEVVM_ROOT', 'E:\Hyper-V', 'Machine')`, then a new
+That root is configurable. `-Root` defaults to `$env:AGENTVM_ROOT`, falling back to
+`C:\Hyper-V`, and `-GoldenPath` / `-BuildDirectory` derive from it; `New-AgentVM.ps1` and
+`Remove-AgentVM.ps1` resolve theirs the same way. So either set the variable once
+(`[Environment]::SetEnvironmentVariable('AGENTVM_ROOT', 'E:\Hyper-V', 'Machine')`, then a new
 shell) or pass `-Root E:\Hyper-V` to all three scripts — they have to agree.
 
 To run Packer directly instead:
@@ -138,7 +138,7 @@ Never edit the image in place — children read it byte for byte. Build to a new
 
 Point new VMs at it and retire the old one when its last child is gone;
 `Build-GoldenImage.ps1` refuses to overwrite an image that still has children, and
-`Remove-DevVM.ps1` refuses to delete a disk that is somebody's parent.
+`Remove-AgentVM.ps1` refuses to delete a disk that is somebody's parent.
 
 Small changes — an SDK point release, an updated MCP server, a revised global `CLAUDE.md` —
 go through the Ansible path in §8.4 instead. A rebuild is for the toolchain, not for config.

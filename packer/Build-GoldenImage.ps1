@@ -7,7 +7,7 @@
 
       1. packer init / packer build against ubuntu-rn.pkr.hcl.
       2. Lifts the VHDX out of Packer's exported VM folder to the flat path that
-         New-DevVM.ps1 expects (<root>\golden\golden-ubuntu-rn.vhdx).
+         New-AgentVM.ps1 expects (<root>\golden\golden-ubuntu-rn.vhdx).
       3. Compacts it with Optimize-VHD - worth several GB after 90-cleanup.sh's fstrim.
       4. Marks it read-only, because every project VM reads it as a differencing parent.
 
@@ -18,12 +18,12 @@
     Run from an elevated PowerShell session; the Hyper-V builder requires Administrator.
 
 .PARAMETER Root
-    Where images and VMs live. Defaults to $env:DEVVM_ROOT, else C:\Hyper-V. -GoldenPath and
-    -BuildDirectory derive from it; New-DevVM.ps1 resolves its own defaults the same way, so
-    setting DEVVM_ROOT once keeps every script pointed at the same drive.
+    Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -GoldenPath and
+    -BuildDirectory derive from it; New-AgentVM.ps1 resolves its own defaults the same way, so
+    setting AGENTVM_ROOT once keeps every script pointed at the same drive.
 
 .PARAMETER GoldenPath
-    Where the finished image lands. Match New-DevVM.ps1's -GoldenVhdx.
+    Where the finished image lands. Match New-AgentVM.ps1's -GoldenVhdx.
 
 .PARAMETER OscdimgPath
     oscdimg.exe from the Windows ADK. Packer needs an ISO tool on PATH to build the cidata
@@ -70,7 +70,7 @@
     .\Build-GoldenImage.ps1 -GoldenPath C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
 
 .EXAMPLE
-    # Keep everything on a second drive; New-DevVM.ps1 -Root E:\Hyper-V then matches.
+    # Keep everything on a second drive; New-AgentVM.ps1 -Root E:\Hyper-V then matches.
     .\Build-GoldenImage.ps1 -Root E:\Hyper-V
 #>
 
@@ -78,7 +78,7 @@
 param(
     [string]$PackerDirectory = $PSScriptRoot,
 
-    [string]$Root = $(if ($env:DEVVM_ROOT) { $env:DEVVM_ROOT } else { 'C:\Hyper-V' }),
+    [string]$Root = $(if ($env:AGENTVM_ROOT) { $env:AGENTVM_ROOT } else { 'C:\Hyper-V' }),
 
     [string]$GoldenPath = [IO.Path]::Combine($Root, 'golden', 'golden-ubuntu-rn.vhdx'),
 
@@ -487,4 +487,4 @@ Remove-Item -LiteralPath $BuildDirectory -Recurse -Force -ErrorAction SilentlyCo
 Write-Host ''
 Write-Step 'Golden image ready'
 Write-Note $GoldenPath
-Write-Note "Create the first VM with: .\New-DevVM.ps1 -Name app-foo -Repo <git-url> -GoldenVhdx `"$GoldenPath`""
+Write-Note "Create the first VM with: .\New-AgentVM.ps1 -Name app-foo -Repo <git-url> -GoldenVhdx `"$GoldenPath`""

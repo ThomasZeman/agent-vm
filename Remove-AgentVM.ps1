@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Removes a per-project React Native development VM created by New-DevVM.ps1.
+    Removes a per-project React Native development VM created by New-AgentVM.ps1.
 
 .DESCRIPTION
-    The companion to New-DevVM.ps1 (section 8.2 of linux-vm-on-windows.md):
+    The companion to New-AgentVM.ps1 (section 8.2 of linux-vm-on-windows.md):
 
       1. Shuts the VM down - gracefully first, then forced if it does not stop in time.
       2. Removes the VM definition from Hyper-V.
@@ -18,11 +18,11 @@
     Run from an elevated PowerShell session; the Hyper-V cmdlets require Administrator.
 
 .PARAMETER Name
-    Project / VM name, e.g. app-foo. The same value passed to New-DevVM.ps1.
+    Project / VM name, e.g. app-foo. The same value passed to New-AgentVM.ps1.
 
 .PARAMETER Root
-    Where images and VMs live. Defaults to $env:DEVVM_ROOT, else C:\Hyper-V. -VmRoot derives
-    from it, and must be the same root New-DevVM.ps1 built the VM under.
+    Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -VmRoot derives
+    from it, and must be the same root New-AgentVM.ps1 built the VM under.
 
 .PARAMETER KeepFiles
     Remove the VM from Hyper-V but leave the project folder and its disk on disk.
@@ -35,10 +35,10 @@
     How long to wait for a graceful guest shutdown before turning the VM off. Default 60.
 
 .EXAMPLE
-    .\Remove-DevVM.ps1 -Name app-foo
+    .\Remove-AgentVM.ps1 -Name app-foo
 
 .EXAMPLE
-    .\Remove-DevVM.ps1 -Name app-foo -Force
+    .\Remove-AgentVM.ps1 -Name app-foo -Force
 #>
 
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -47,7 +47,7 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]{0,30}$')]
     [string]$Name,
 
-    [string]$Root = $(if ($env:DEVVM_ROOT) { $env:DEVVM_ROOT } else { 'C:\Hyper-V' }),
+    [string]$Root = $(if ($env:AGENTVM_ROOT) { $env:AGENTVM_ROOT } else { 'C:\Hyper-V' }),
 
     [string]$VmRoot = [IO.Path]::Combine($Root, 'vms'),
 
@@ -95,7 +95,7 @@ function Get-FolderSizeGb {
     [math]::Round($bytes / 1GB, 2)
 }
 
-function Stop-DevVMHard {
+function Stop-AgentVMHard {
     param([string]$VMName, [int]$TimeoutSeconds)
 
     $vm = Get-VM -Name $VMName
@@ -201,7 +201,7 @@ if (-not $PSCmdlet.ShouldProcess($target, 'Remove dev VM')) {
 
 if ($vm) {
     Write-Step 'Stopping the VM'
-    Stop-DevVMHard -VMName $Name -TimeoutSeconds $ShutdownTimeoutSeconds
+    Stop-AgentVMHard -VMName $Name -TimeoutSeconds $ShutdownTimeoutSeconds
 
     # Checkpoints are disabled on these VMs, but a hand-made one would block disk deletion.
     $snapshots = @(Get-VMSnapshot -VMName $Name -ErrorAction SilentlyContinue)
@@ -243,4 +243,4 @@ Write-Step "'$Name' removed"
 if ($KeepFiles -and $folderExists) {
     Write-Note "project files kept at $vmPath"
 }
-Write-Note "Recreate it with: .\New-DevVM.ps1 -Name $Name -Repo <git-url>"
+Write-Note "Recreate it with: .\New-AgentVM.ps1 -Name $Name -Repo <git-url>"

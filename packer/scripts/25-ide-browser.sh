@@ -42,8 +42,8 @@ apt_get install -y xdg-utils
 
 echo "==> GitHub CLI (GitHub apt repository)"
 # Only the binary. No token, no git identity and no known_hosts entry go into the image;
-# New-DevVM.ps1 logs gh in per VM, after boot, and only when asked. Keyring and list follow
-# the layout GitHub documents, which is also what New-DevVM.ps1's ensure_gh fallback writes
+# New-AgentVM.ps1 logs gh in per VM, after boot, and only when asked. Keyring and list follow
+# the layout GitHub documents, which is also what New-AgentVM.ps1's ensure_gh fallback writes
 # on an image that predates this step.
 sudo mkdir -p -m 755 /etc/apt/keyrings
 wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \

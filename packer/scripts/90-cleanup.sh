@@ -21,7 +21,7 @@ sudo rm -rf /var/lib/apt/lists/*
 
 echo "==> pin clone datasource to NoCloud"
 # Faster, quieter boots for the clones: only ever probe the per-VM NoCloud seed that
-# New-DevVM.ps1 attaches, instead of walking every datasource cloud-init knows.
+# New-AgentVM.ps1 attaches, instead of walking every datasource cloud-init knows.
 #
 # This is done HERE, not in the autoinstall config, on purpose. The installer applies its
 # `identity` and `ssh` sections through a first-boot cloud-init run in the target; pinning
@@ -33,7 +33,7 @@ echo 'datasource_list: [NoCloud, None]' | sudo tee /etc/cloud/cloud.cfg.d/99-noc
 
 echo "==> cloud-init state"
 # Without this, cloud-init believes it has already run and ignores the per-VM seed ISO
-# that New-DevVM.ps1 attaches - no user, no key, no repo clone.
+# that New-AgentVM.ps1 attaches - no user, no key, no repo clone.
 sudo cloud-init clean --logs --seed
 sudo rm -rf /var/lib/cloud/instances /var/lib/cloud/instance
 

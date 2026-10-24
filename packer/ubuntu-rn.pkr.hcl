@@ -1,7 +1,7 @@
 # Golden image for React Native development VMs (section 8.1 of linux-vm-on-windows.md).
 #
 # Builds Ubuntu 24.04 + XFCE + Android SDK + a pre-booted AVD snapshot + Claude Code,
-# then generalizes the disk so New-DevVM.ps1 can clone it with differencing disks.
+# then generalizes the disk so New-AgentVM.ps1 can clone it with differencing disks.
 #
 #   packer init  .
 #   packer build .

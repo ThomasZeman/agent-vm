@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Sets a new RDP password on a running dev VM created by New-DevVM.ps1.
+    Sets a new RDP password on a running dev VM created by New-AgentVM.ps1.
 
 .DESCRIPTION
-    Changes the guest password over SSH, which needs no password of its own: New-DevVM.ps1
+    Changes the guest password over SSH, which needs no password of its own: New-AgentVM.ps1
     put your public key on the dev account, and dev has passwordless sudo.
 
     The new value reaches the guest on stdin, never on a command line, so it shows up in
@@ -13,7 +13,7 @@
 
     The seed ISO in the project folder still holds the original password, but cloud-init
     applies chpasswd only on the first boot of an instance, so the change is permanent. The
-    new value is recorded in rdp-password.txt next to the ISO, where Get-DevVMPassword.ps1
+    new value is recorded in rdp-password.txt next to the ISO, where Get-AgentVMPassword.ps1
     looks first. That file is no more exposed than the ISO beside it, which already carries
     the original in plain text.
 
@@ -21,10 +21,10 @@
     Pass -IpAddress to skip the lookup and run unelevated.
 
 .PARAMETER Name
-    Project / VM name, e.g. app-foo. The same value passed to New-DevVM.ps1.
+    Project / VM name, e.g. app-foo. The same value passed to New-AgentVM.ps1.
 
 .PARAMETER Password
-    The new password. Generated when omitted (8 unambiguous alphanumerics, like New-DevVM.ps1)
+    The new password. Generated when omitted (8 unambiguous alphanumerics, like New-AgentVM.ps1)
     and printed at the end. Printable ASCII only, 1 to 64 characters.
 
 .PARAMETER IpAddress
@@ -32,22 +32,22 @@
     elevated session.
 
 .PARAMETER Root
-    Where images and VMs live. Defaults to $env:DEVVM_ROOT, else C:\Hyper-V. -VmRoot derives
-    from it, and must be the same root New-DevVM.ps1 built the VM under.
+    Where images and VMs live. Defaults to $env:AGENTVM_ROOT, else C:\Hyper-V. -VmRoot derives
+    from it, and must be the same root New-AgentVM.ps1 built the VM under.
 
 .PARAMETER User
     Guest account to change. Default dev.
 
 .PARAMETER NoRecord
-    Do not write rdp-password.txt. Get-DevVMPassword.ps1 will then keep reporting the
+    Do not write rdp-password.txt. Get-AgentVMPassword.ps1 will then keep reporting the
     original password from the seed ISO.
 
 .EXAMPLE
-    .\Set-DevVMPassword.ps1 -Name app-foo
+    .\Set-AgentVMPassword.ps1 -Name app-foo
     Generates a password, applies it and prints it.
 
 .EXAMPLE
-    .\Set-DevVMPassword.ps1 -Name app-foo -Password hunter2 -IpAddress 192.168.1.42
+    .\Set-AgentVMPassword.ps1 -Name app-foo -Password hunter2 -IpAddress 192.168.1.42
 #>
 
 [CmdletBinding()]
@@ -63,7 +63,7 @@ param(
     [ValidatePattern('^\d{1,3}(\.\d{1,3}){3}$')]
     [string]$IpAddress,
 
-    [string]$Root = $(if ($env:DEVVM_ROOT) { $env:DEVVM_ROOT } else { 'C:\Hyper-V' }),
+    [string]$Root = $(if ($env:AGENTVM_ROOT) { $env:AGENTVM_ROOT } else { 'C:\Hyper-V' }),
 
     [string]$VmRoot = [IO.Path]::Combine($Root, 'vms'),
 
@@ -83,7 +83,7 @@ function Write-Note { param([string]$Text) Write-Host "    $Text" -ForegroundCol
 
 function New-RandomPassword {
     param([int]$Length = 8)
-    # Same alphabet as New-DevVM.ps1: no 0/O, 1/l/I, so it can be read off a screen.
+    # Same alphabet as New-AgentVM.ps1: no 0/O, 1/l/I, so it can be read off a screen.
     $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
     $bytes = [byte[]]::new($Length)
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -158,11 +158,11 @@ if ($LASTEXITCODE -ne 0) {
 if (-not $NoRecord) {
     $recordPath = Join-Path $vmPath 'rdp-password.txt'
     Set-Content -LiteralPath $recordPath -Value $Password -Encoding ASCII -NoNewline
-    Write-Note "recorded in $recordPath for Get-DevVMPassword.ps1"
+    Write-Note "recorded in $recordPath for Get-AgentVMPassword.ps1"
 }
 
 Write-Host ''
 Write-Step 'Password changed'
 Write-Host "  RDP user : $User"
 Write-Host "  RDP pass : $Password"
-if ($generated) { Write-Note "generated; read it back any time with .\Get-DevVMPassword.ps1 -Name $Name" }
+if ($generated) { Write-Note "generated; read it back any time with .\Get-AgentVMPassword.ps1 -Name $Name" }

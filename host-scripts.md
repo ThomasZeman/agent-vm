@@ -7,21 +7,21 @@ four work on individual VMs cloned from it.
 For the design see `linux-vm-on-windows.md`; for the step-by-step see `runbook.md`; for
 what is inside the image see `golden-image-contents.md`; for the Packer build itself see
 `packer/README.md`. Each script also carries full comment-based help:
-`Get-Help .\New-DevVM.ps1 -Full`.
+`Get-Help .\New-AgentVM.ps1 -Full`.
 
 | Script | Lives in | Does | Needs elevation |
 |---|---|---|---|
 | `packer\Build-GoldenImage.ps1` | `packer\` | Builds the golden VHDX with Packer, then compacts and write-protects it | yes |
-| `New-DevVM.ps1` | repo root | Clones a project VM from the golden image, boots it, writes its `.rdp` file, optionally clones the repo | yes |
-| `Remove-DevVM.ps1` | repo root | Stops and deletes a project VM and its files | yes |
-| `Get-DevVMPassword.ps1` | repo root | Prints a VM's RDP password | no |
-| `Set-DevVMPassword.ps1` | repo root | Sets a new RDP password over SSH | only for the address lookup |
+| `New-AgentVM.ps1` | repo root | Clones a project VM from the golden image, boots it, writes its `.rdp` file, optionally clones the repo | yes |
+| `Remove-AgentVM.ps1` | repo root | Stops and deletes a project VM and its files | yes |
+| `Get-AgentVMPassword.ps1` | repo root | Prints a VM's RDP password | no |
+| `Set-AgentVMPassword.ps1` | repo root | Sets a new RDP password over SSH | only for the address lookup |
 
 ---
 
 ## Shared conventions
 
-**Where things live.** Every script takes `-Root`, defaulting to `$env:DEVVM_ROOT` and then
+**Where things live.** Every script takes `-Root`, defaulting to `$env:AGENTVM_ROOT` and then
 `C:\Hyper-V`. Everything else derives from it:
 
 ```
@@ -29,16 +29,16 @@ what is inside the image see `golden-image-contents.md`; for the Packer build it
 <Root>\golden\build\                    Packer's scratch output; deleted after a build
 <Root>\vms\<Name>\disk.vhdx             differencing disk, parent = the golden image
 <Root>\vms\<Name>\seed.iso              cloud-init seed; stays attached for the VM's life
-<Root>\vms\<Name>\rdp-password.txt      only after Set-DevVMPassword.ps1
+<Root>\vms\<Name>\rdp-password.txt      only after Set-AgentVMPassword.ps1
 <Root>\vms\<Name>\Virtual Machines\     Hyper-V's own config
-.\<Name>.rdp                            in the directory New-DevVM.ps1 was run from
+.\<Name>.rdp                            in the directory New-AgentVM.ps1 was run from
 ```
 
 To move all of it to another drive, set the variable once at machine scope and open a new
 shell, or pass the same `-Root` to every script:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('DEVVM_ROOT', 'E:\Hyper-V', 'Machine')
+[Environment]::SetEnvironmentVariable('AGENTVM_ROOT', 'E:\Hyper-V', 'Machine')
 ```
 
 **Names.** `-Name` is the VM name, the guest hostname, the folder under `vms\` and the
@@ -47,7 +47,7 @@ or digit.
 
 **Elevation.** The Hyper-V cmdlets need Administrator, so anything that creates, inspects
 or removes a VM runs from an elevated PowerShell. The two password scripts are the
-exception: they work on files and SSH, and only `Set-DevVMPassword.ps1` without
+exception: they work on files and SSH, and only `Set-AgentVMPassword.ps1` without
 `-IpAddress` touches Hyper-V.
 
 **Guards.** The scripts refuse rather than guess whenever the golden image could be harmed.
@@ -96,8 +96,8 @@ build has already failed; see `packer/README.md`, "The installer is asking me qu
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `-Root` | `$env:DEVVM_ROOT` or `C:\Hyper-V` | Base for `-GoldenPath` and `-BuildDirectory` |
-| `-GoldenPath` | `<Root>\golden\golden-ubuntu-rn.vhdx` | Where the finished image lands. Must match `New-DevVM.ps1 -GoldenVhdx` |
+| `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-GoldenPath` and `-BuildDirectory` |
+| `-GoldenPath` | `<Root>\golden\golden-ubuntu-rn.vhdx` | Where the finished image lands. Must match `New-AgentVM.ps1 -GoldenVhdx` |
 | `-BuildDirectory` | `<Root>\golden\build` | Packer's output directory, deleted afterwards |
 | `-PackerDirectory` | the script's own folder | Where `ubuntu-rn.pkr.hcl` is |
 | `-SwitchName` | `DevSwitch` | Hyper-V switch the build VM attaches to |
@@ -117,16 +117,16 @@ until its last child is removed.
 
 ---
 
-## `New-DevVM.ps1`
+## `New-AgentVM.ps1`
 
 Run from the repo root, in an elevated shell. About two minutes to a running VM.
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo you/foo                       # offers your GitHub + Claude logins, then clones
-.\New-DevVM.ps1 -Name app-foo -Repo you/foo -SkipGitHubLogin -SkipClaudeLogin   # no prompts, no credentials; ~/app stays empty
-.\New-DevVM.ps1 -Name app-scratch                                 # no repo at all
-.\New-DevVM.ps1 -Name app-bar -Repo you/bar -DeviceSerial 3A9X0T2K -HostIp 192.168.1.10   # phone, no emulator
-.\New-DevVM.ps1 -Name app-foo2 -Repo you/foo -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
+.\New-AgentVM.ps1 -Name app-foo -Repo you/foo                       # offers your GitHub + Claude logins, then clones
+.\New-AgentVM.ps1 -Name app-foo -Repo you/foo -SkipGitHubLogin -SkipClaudeLogin   # no prompts, no credentials; ~/app stays empty
+.\New-AgentVM.ps1 -Name app-scratch                                 # no repo at all
+.\New-AgentVM.ps1 -Name app-bar -Repo you/bar -DeviceSerial 3A9X0T2K -HostIp 192.168.1.10   # phone, no emulator
+.\New-AgentVM.ps1 -Name app-foo2 -Repo you/foo -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
 ```
 
 **What it does**
@@ -150,7 +150,7 @@ Run from the repo root, in an elevated shell. About two minutes to a running VM.
 6. Writes `<Name>.rdp` with lossless settings and prints the connection lines: SSH with
    the tmux session, RDP with the password, the emulator's adb address or the phone's
    serial, a screenshot command, and the Metro URL.
-7. Once SSH answers and cloud-init has finished, copies `devvm-setup.sh` to `/tmp` in the
+7. Once SSH answers and cloud-init has finished, copies `agentvm-setup.sh` to `/tmp` in the
    guest and pipes the accepted credentials to it on stdin (never as arguments):
    `gh auth login --with-token`, `gh auth setup-git`,
    `git config --global user.*`, and the Claude token into `~/.claude/settings.json` as
@@ -158,7 +158,7 @@ Run from the repo root, in an elevated shell. About two minutes to a running VM.
 8. With `-Repo` and without `-SkipGitHubLogin`: if the GitHub token went over, clones into
    `~/app` and runs `npm install` straight away. Otherwise asks whether to log into GitHub
    in the guest now, and runs the same script over `ssh -t` so `gh auth login` can prompt,
-   giving that VM a token of its own. The script stays at `/tmp/devvm-setup.sh` in the
+   giving that VM a token of its own. The script stays at `/tmp/agentvm-setup.sh` in the
    guest, so a declined or failed run can be finished later with the command the summary
    prints.
 
@@ -176,12 +176,12 @@ accounts there.
 | `-Repo` | none | Anything `gh repo clone` takes, or a git URL for a non-GitHub host |
 | `-SkipGitHubLogin` | off | Never copy the gh token, never offer the login, never clone |
 | `-SkipClaudeLogin` | off | Never offer the Claude token |
-| `-ClaudeTokenPath` | `~\.devvm\claude-oauth-token` | Cached `claude setup-token` token; created on first use, your account only |
+| `-ClaudeTokenPath` | `~\.agent-vm\claude-oauth-token` | Cached `claude setup-token` token; created on first use, your account only |
 | `-Memory` | 10 GB, or 6 GB with `-DeviceSerial` | Static RAM |
 | `-Cpus` | 4 | Virtual processors |
 | `-DeviceSerial` | none | adb serial of a phone; skips the emulator |
 | `-HostIp` | none | Host address on the switch subnet; required with `-DeviceSerial` |
-| `-Root` | `$env:DEVVM_ROOT` or `C:\Hyper-V` | Base for `-GoldenVhdx` and `-VmRoot` |
+| `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-GoldenVhdx` and `-VmRoot` |
 | `-GoldenVhdx` | `<Root>\golden\golden-ubuntu-rn.vhdx` | Parent image |
 | `-VmRoot` | `<Root>\vms` | Where the project folder is created |
 | `-SwitchName` | `DevSwitch` | Hyper-V switch |
@@ -197,15 +197,15 @@ switch is bound to the right NIC.
 
 ---
 
-## `Remove-DevVM.ps1`
+## `Remove-AgentVM.ps1`
 
 Run from the repo root, in an elevated shell.
 
 ```powershell
-.\Remove-DevVM.ps1 -Name app-foo               # asks first
-.\Remove-DevVM.ps1 -Name app-foo -Force        # scripted
-.\Remove-DevVM.ps1 -Name app-foo -KeepFiles    # unregister the VM, keep the folder and disk
-.\Remove-DevVM.ps1 -Name app-foo -WhatIf
+.\Remove-AgentVM.ps1 -Name app-foo               # asks first
+.\Remove-AgentVM.ps1 -Name app-foo -Force        # scripted
+.\Remove-AgentVM.ps1 -Name app-foo -KeepFiles    # unregister the VM, keep the folder and disk
+.\Remove-AgentVM.ps1 -Name app-foo -WhatIf
 ```
 
 **What it does**
@@ -225,7 +225,7 @@ Run from the repo root, in an elevated shell.
 | Parameter | Default | Meaning |
 |---|---|---|
 | `-Name` | required | The VM to remove |
-| `-Root` | `$env:DEVVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
+| `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
 | `-VmRoot` | `<Root>\vms` | Where the project folder is |
 | `-RdpOutputDirectory` | current directory | Where the `.rdp` file was written |
 | `-KeepFiles` | off | Unregister only; leave the folder on disk |
@@ -238,17 +238,17 @@ that exists nowhere else.
 
 ---
 
-## `Get-DevVMPassword.ps1`
+## `Get-AgentVMPassword.ps1`
 
 Run from the repo root. No elevation.
 
 ```powershell
-.\Get-DevVMPassword.ps1 -Name app-foo
-.\Get-DevVMPassword.ps1 -Name app-foo | Set-Clipboard
+.\Get-AgentVMPassword.ps1 -Name app-foo
+.\Get-AgentVMPassword.ps1 -Name app-foo | Set-Clipboard
 ```
 
 **What it does.** Prints the RDP password of the `dev` account. If `rdp-password.txt`
-exists in the project folder it wins, because `Set-DevVMPassword.ps1` wrote it after a
+exists in the project folder it wins, because `Set-AgentVMPassword.ps1` wrote it after a
 change. Otherwise the password is read out of `seed.iso`, where cloud-init's `chpasswd`
 entry holds it in plain text. The ISO is scanned as bytes rather than mounted, so the
 running VM's hold on the file does not matter and nothing needs to be dismounted.
@@ -260,24 +260,24 @@ Only the password goes to the pipeline; the source it came from goes to the host
 | Parameter | Default | Meaning |
 |---|---|---|
 | `-Name` | required | The VM |
-| `-Root` | `$env:DEVVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
+| `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
 | `-VmRoot` | `<Root>\vms` | Where the project folder is |
 | `-User` | `dev` | Account to look up |
 
 **Fails when** the project folder is missing, the seed ISO is gone, or the ISO has no
-`chpasswd` entry for the user. In the second case `Set-DevVMPassword.ps1` is the way
+`chpasswd` entry for the user. In the second case `Set-AgentVMPassword.ps1` is the way
 forward.
 
 ---
 
-## `Set-DevVMPassword.ps1`
+## `Set-AgentVMPassword.ps1`
 
 Run from the repo root. Elevation only when the VM's address has to be looked up.
 
 ```powershell
-.\Set-DevVMPassword.ps1 -Name app-foo                                   # generates one, prints it
-.\Set-DevVMPassword.ps1 -Name app-foo -Password hunter2
-.\Set-DevVMPassword.ps1 -Name app-foo -Password hunter2 -IpAddress 192.168.1.42   # unelevated
+.\Set-AgentVMPassword.ps1 -Name app-foo                                   # generates one, prints it
+.\Set-AgentVMPassword.ps1 -Name app-foo -Password hunter2
+.\Set-AgentVMPassword.ps1 -Name app-foo -Password hunter2 -IpAddress 192.168.1.42   # unelevated
 ```
 
 **What it does**
@@ -286,12 +286,12 @@ Run from the repo root. Elevation only when the VM's address has to be looked up
    the Hyper-V module, that the VM exists and is running, and that it has reported an
    IPv4 address.
 2. Generates an 8-character password if none was given, from the same unambiguous
-   alphabet `New-DevVM.ps1` uses.
+   alphabet `New-AgentVM.ps1` uses.
 3. Runs `chpasswd` in the guest over SSH with your key and passwordless sudo. The new
    value goes over stdin, never on a command line, and the guest strips the carriage
    return PowerShell appends to piped text.
 4. Records the password in `rdp-password.txt` in the project folder for
-   `Get-DevVMPassword.ps1`, unless `-NoRecord`. Prints it.
+   `Get-AgentVMPassword.ps1`, unless `-NoRecord`. Prints it.
 
 The seed ISO keeps the original password, but cloud-init applies `chpasswd` only on the
 first boot of an instance, so the change survives reboots.
@@ -303,7 +303,7 @@ first boot of an instance, so the change survives reboots.
 | `-Name` | required | The VM |
 | `-Password` | generated | 1 to 64 printable ASCII characters |
 | `-IpAddress` | looked up via Hyper-V | Guest address; skips the lookup and the elevation |
-| `-Root` | `$env:DEVVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
+| `-Root` | `$env:AGENTVM_ROOT` or `C:\Hyper-V` | Base for `-VmRoot` |
 | `-VmRoot` | `<Root>\vms` | Where the project folder is |
 | `-User` | `dev` | Account to change |
 | `-NoRecord` | off | Do not write `rdp-password.txt` |
@@ -323,22 +323,22 @@ First time on a host:
 cd packer
 .\Build-GoldenImage.ps1
 cd ..
-.\New-DevVM.ps1 -Name smoke            # verify the image (runbook §3)
-.\Remove-DevVM.ps1 -Name smoke -Force
+.\New-AgentVM.ps1 -Name smoke            # verify the image (runbook §3)
+.\Remove-AgentVM.ps1 -Name smoke -Force
 ```
 
 A new project:
 
 ```powershell
-.\New-DevVM.ps1 -Name app-foo -Repo you/foo
+.\New-AgentVM.ps1 -Name app-foo -Repo you/foo
 mstsc .\app-foo.rdp
 ```
 
 Forgot the password, or want a different one:
 
 ```powershell
-.\Get-DevVMPassword.ps1 -Name app-foo
-.\Set-DevVMPassword.ps1 -Name app-foo
+.\Get-AgentVMPassword.ps1 -Name app-foo
+.\Set-AgentVMPassword.ps1 -Name app-foo
 ```
 
 Toolchain upgrade, without touching running VMs:
@@ -347,12 +347,12 @@ Toolchain upgrade, without touching running VMs:
 cd packer
 .\Build-GoldenImage.ps1 -GoldenPath C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
 cd ..
-.\New-DevVM.ps1 -Name app-foo2 -Repo you/foo -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
-.\Remove-DevVM.ps1 -Name app-foo       # once app-foo2 has taken over
+.\New-AgentVM.ps1 -Name app-foo2 -Repo you/foo -GoldenVhdx C:\Hyper-V\golden\golden-ubuntu-rn-2026-09.vhdx
+.\Remove-AgentVM.ps1 -Name app-foo       # once app-foo2 has taken over
 ```
 
 Done with a project:
 
 ```powershell
-.\Remove-DevVM.ps1 -Name app-foo
+.\Remove-AgentVM.ps1 -Name app-foo
 ```
