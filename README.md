@@ -129,6 +129,8 @@ the repo root. Run all of them from an elevated PowerShell. The steps below star
    ssh dev@<vm-ip> -t tmux attach -t agent
    ```
 
+   ![The agent desktop over RDP: XFCE with the agent's tmux session open in ~/app](docs/images/running-vm.png)
+
 4. Start the agent in that session (`claude`), and leave it to work. Closing the RDP window leaves everything
    running.
 
