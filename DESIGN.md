@@ -157,6 +157,7 @@ Once the installed system answers on SSH, Packer runs the scripts in `packer/scr
 | `10-desktop-xrdp.sh` | System upgrade, XFCE, xrdp, TigerVNC, the agent desktop, tmux and shell tools |
 | `20-node-java.sh` | Node (NodeSource), SDKMAN with Temurin 21 and 17, the C/C++ toolchain, watchman |
 | `25-ide-browser.sh` | VS Code, the GitHub CLI, Google Chrome with the Claude extension, Chromium, Playwright |
+| `27-docker.sh` | Docker Engine with buildx and compose, container DNS through systemd-resolved |
 | `30-android-sdk.sh` | The Android SDK, a system image, the `dev` AVD, `~/bin/emu`, `adb-bridge.service` |
 | `40-emulator-snapshot.sh` | Boots the AVD once and saves the `golden` snapshot |
 | `50-claude.sh` | Claude Code, its VS Code extension, the `mobile` MCP server, `~/shots/` |
@@ -273,6 +274,26 @@ and its Linux build is only published for some releases, so a failed download wa
 Chrome is there as well as Chromium because Claude Code talks to the extension through a native messaging host,
 which the Chromium snap does not allow. Claude Code writes that host's manifest itself the first time `claude
 --chrome` runs, so nothing about it is in the image.
+
+### Docker
+
+**Docker Engine** from Docker's apt repository, with the buildx and compose plugins, rather than Ubuntu's `docker.io`,
+which lags behind and has no `docker compose`. The agent uses it for services a project needs, such as a database,
+and to try things in a throwaway container. Containers only need the guest's kernel, not nested virtualization.
+
+- The daemon starts at boot, and `dev` is in the `docker` group, so the agent needs no `sudo`. The group is
+  root-equivalent, which changes nothing: `dev` already has passwordless sudo.
+- Containers log with the `local` driver, which rotates. The default `json-file` driver never does, and a chatty
+  container left running for hours fills the disk.
+- **Container DNS goes through systemd-resolved.** By default Docker copies the router into each container as its
+  name server. Home routers often mishandle the A and AAAA queries that musl, Alpine's C library, sends in parallel
+  from one socket. On my network every lookup from an Alpine container timed out, and `node:22-alpine` failed with
+  `EAI_AGAIN`, while glibc images and the VM itself resolved fine. resolved therefore also listens on the `docker0`
+  address (`DNSStubListenerExtra=172.17.0.1`), and the daemon hands that address to containers (`"dns"`, with
+  `"bip"` pinning `docker0` to it). Compose networks reach it through Docker's embedded DNS, and names on the LAN
+  keep working, which a hardcoded public resolver would break.
+- The image carries no container images. The build's smoke test, a shell in Alpine that resolves a name, pulls one
+  and removes it again.
 
 ### Android
 

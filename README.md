@@ -44,6 +44,7 @@ Each VM has:
   opens that desktop, without a password prompt.
 - Node, Java (Temurin 21 and 17), the Android SDK and an emulator that starts from a snapshot in seconds.
 - VS Code, Google Chrome with the Claude in Chrome extension, Chromium and Playwright with its browsers.
+- Docker with compose, usable without `sudo`.
 - Claude Code and the GitHub CLI. The script can log both in for me, over SSH, after the VM has booted.
 
 It is worth mentioning that no credentials are part of the image or the seed, not even a password. Everything

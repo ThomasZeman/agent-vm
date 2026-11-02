@@ -302,6 +302,11 @@ build {
   }
 
   provisioner "shell" {
+    script          = "${path.root}/scripts/27-docker.sh"
+    execute_command = "chmod +x {{ .Path }}; {{ .Vars }} bash '{{ .Path }}'"
+  }
+
+  provisioner "shell" {
     script          = "${path.root}/scripts/30-android-sdk.sh"
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} bash '{{ .Path }}'"
     environment_vars = [

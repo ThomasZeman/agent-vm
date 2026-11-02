@@ -741,6 +741,8 @@ and recreated, so you can install, configure and break things freely inside it.
   in `~/.cache/ms-playwright`; a project-local `playwright` of the same version reuses them,
   another version downloads its own.
 - VS Code, the GitHub CLI (`gh auth status` tells whether it is logged in), tmux.
+- Docker with compose, without `sudo`, for services a project needs or to try something in
+  a throwaway container. Published ports are reachable from the LAN, not only from this VM.
 - The Android SDK in `~/Android/Sdk` with adb and an emulator; see below. The `mobile` MCP
   server drives Android apps through the element tree - prefer it over `adb shell input`
   at guessed coordinates.
