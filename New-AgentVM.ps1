@@ -704,7 +704,7 @@ $emulatorAutostart = @'
 
 # The agent's global ~/.claude/CLAUDE.md. Facts about the machine only, nothing about the kind
 # of project: every VM gets the same file, whether it is for a mobile app, a website or a
-# scraper. Project conventions (build, test, its verification loop) belong in the project's own
+# backend service. Project conventions (build, test, its verification loop) belong in the project's own
 # ~/app/CLAUDE.md, which Claude Code loads on top of this one.
 #
 # It lives here, not in the golden image (50-claude.sh), so an edit reaches the next VM without

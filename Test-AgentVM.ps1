@@ -16,10 +16,10 @@
       time, locale         the guest reads time and language like the host, so the browser in
                            it does too (time zone / locale baked in by Build-GoldenImage.ps1)
       desktop              the agent desktop on :1 from boot, RDP onto it (93b1502); fixed at
-                           -RdpResolution (92714c4); no blanking
+                           -RdpResolution (92714c4); no blanking; the Ubuntu desktop fonts
       chrome               no keyring or first-run dialog on a fresh profile (cb2054e); the
-                           Claude in Chrome policy (ba02431); what a web page can see,
-                           WebGL on llvmpipe included
+                           Claude in Chrome policy (ba02431); a page gets an ordinary desktop
+                           browser - WebGL on llvmpipe, a mouse, the host's time zone
       docker               engine, group, log driver, and Alpine DNS through resolved (2379fc2)
       android              adb-bridge not forking on loopback (9640387); emu off the login PATH
                            (a0f5b48); the golden snapshot; libxcb-cursor0
@@ -222,13 +222,25 @@ fi
 ssto="$(xset q 2>/dev/null | awk '/timeout:/ {print $2; exit}')"
 [ "$ssto" = 0 ]; ok $? desktop.no-blanking "screensaver timeout ${ssto:-?}"
 
+# A bare XFCE has only Latin fonts; text in other scripts renders as empty boxes.
+missing=""
+families="$(fc-list : family)"
+for f in 'Noto Sans CJK SC' 'Noto Sans Devanagari' 'Noto Sans Arabic' 'Lohit Tamil' 'KacstBook' 'Waree' 'Padauk' 'Abyssinica SIL'; do
+    echo "$families" | grep -qF "$f" || missing="$missing, $f"
+done
+if [ -z "$missing" ]; then
+    r PASS desktop.fonts "$(echo "$families" | sort -u | wc -l) font families, CJK, Indic, Arabic and Thai included"
+else
+    r FAIL desktop.fonts "missing ${missing#, }"
+fi
+
 # ---------------------------------------------------------------- chrome ---
 # Every launcher goes through the wrapper that keeps Chrome out of the keyring and the
 # first-run dialog (cb2054e).
 wrapper=/usr/bin/google-chrome-stable
 dpkg-divert --list "$wrapper" 2>/dev/null | grep -q 'google-chrome-stable.distrib' \
     && grep -q -- '--password-store=basic' "$wrapper" && grep -q -- '--no-first-run' "$wrapper" \
-    && grep -q -- '--ignore-gpu-blocklist' "$wrapper"
+    && grep -q -- '--ignore-gpu-blocklist' "$wrapper" && grep -q -- '--blink-settings=.*PointerType' "$wrapper"
 ok $? chrome.wrapper "$(dpkg-divert --list "$wrapper" 2>/dev/null | head -1)"
 
 bad="$(grep -lE '^Exec=.*/opt/google/chrome' /usr/share/applications/*.desktop "$HOME"/.local/share/applications/*.desktop 2>/dev/null)"
@@ -286,8 +298,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sh = (c) => { try { return execSync(c, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return ''; } };
 
 const dir = mkdtempSync('/tmp/agentvm-smoke-profile-');
-// A FIXED port, deliberately. --remote-debugging-port=0 (let Chrome pick one, as Puppeteer
-// does) makes Chrome 156 report navigator.webdriver === true; a fixed port does not.
+// A FIXED port, deliberately. With --remote-debugging-port=0 (let Chrome pick one) Chrome 156
+// marks the whole session as a test-automation session (navigator.webdriver === true), and
+// chrome.regular-session below would fail for a reason of this test's own making.
 const port = 9339;
 const chrome = spawn('google-chrome', [`--user-data-dir=${dir}`, `--remote-debugging-port=${port}`,
   '--remote-debugging-address=127.0.0.1', 'https://example.com/'], { detached: true, stdio: 'ignore' });
@@ -305,7 +318,7 @@ out(keyring ? 'FAIL' : 'PASS', 'chrome.no-keyring-prompt', keyring ? 'a keyring 
 out(firstRun ? 'FAIL' : 'PASS', 'chrome.no-first-run-dialog', firstRun ? 'the first-run terms of service appeared' : 'no first-run dialog in 15s');
 
 const main = sh(`pgrep -af '^/opt/google/chrome/chrome ' | grep -F -- '${dir}' | grep -v -- '--type=' | head -1`);
-const flags = ['--password-store=basic', '--no-first-run', '--no-default-browser-check', '--ignore-gpu-blocklist'];
+const flags = ['--password-store=basic', '--no-first-run', '--no-default-browser-check', '--ignore-gpu-blocklist', '--blink-settings='];
 const missing = flags.filter((f) => !main.includes(f));
 out(main && !missing.length ? 'PASS' : 'FAIL', 'chrome.started-via-wrapper', main ? (missing.length ? `missing ${missing.join(' ')}` : 'browser process carries the wrapper flags') : 'no Chrome browser process');
 
@@ -314,7 +327,7 @@ try {
   const page = targets.find((t) => t.type === 'page' && t.url.includes('example.com'));
   if (!page) throw new Error('no example.com tab');
   // A fresh profile opens the Claude in Chrome sign-in tab in front of ours. A background tab
-  // reports outerHeight === innerHeight, which looks headless, so measure from the front.
+  // reports outerHeight === innerHeight, so bring ours to the front before measuring.
   await fetch(`http://127.0.0.1:${port}/json/activate/${page.id}`);
   await sleep(1500);
   const ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -323,7 +336,8 @@ try {
   const evaluate = (expression) => new Promise((r) => {
     const i = ++id;
     ws.addEventListener('message', function h(e) { const m = JSON.parse(e.data); if (m.id === i) { ws.removeEventListener('message', h); r(m.result?.result?.value); } });
-    // Runtime.evaluate without Runtime.enable: enabling the domain is itself detectable.
+    // Runtime.evaluate only, no Runtime.enable: reading a few values needs nothing more, and
+    // the page under test runs exactly as it would without the probe attached.
     ws.send(JSON.stringify({ id: i, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
   });
   for (let i = 0; i < 20 && (await evaluate('document.readyState')) !== 'complete'; i++) await sleep(500);
@@ -333,25 +347,34 @@ try {
     return { title: document.title, webdriver: navigator.webdriver, ua: navigator.userAgent,
       languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
       renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
+      pointer: ['pointer: none', 'pointer: fine', 'hover: none', 'hover: hover', 'any-pointer: none', 'any-pointer: fine', 'any-hover: hover']
+        .filter((q) => matchMedia('(' + q + ')').matches),
       visible: document.visibilityState, outer: [outerWidth, outerHeight], inner: [innerWidth, innerHeight] };
   })()`);
   ws.close();
   out(v.title === 'Example Domain' ? 'PASS' : 'FAIL', 'chrome.page-loads', `title "${v.title}"`);
-  out(v.webdriver === false && !/Headless/.test(v.ua) ? 'PASS' : 'FAIL', 'chrome.not-automated', `webdriver=${v.webdriver}, ${v.ua}`);
+  // Chrome from the desktop is an ordinary user session: not headless, not a test-automation
+  // session. Claude in Chrome works inside that session, like a person at the keyboard.
+  out(v.webdriver === false && !/Headless/.test(v.ua) ? 'PASS' : 'FAIL', 'chrome.regular-session', `webdriver=${v.webdriver}, ${v.ua}`);
   out(v.tz === expectTz ? 'PASS' : 'FAIL', 'chrome.timezone', `page sees ${v.tz}, host ${expectTz}`);
   // Chrome has no UI language for most regional English variants and falls back to en-GB,
   // as it does on Windows: an en-AU host's own Chrome reports en-GB first too. A locale that
   // never reached the guest shows up as en-US.
   const want = expectLang === 'en-US' || !expectLang.startsWith('en-') ? [expectLang] : [expectLang, 'en-GB'];
   out(want.includes(v.languages[0]) ? 'PASS' : 'FAIL', 'chrome.language', `page sees ${v.languages.join(',')}, host ${expectLang}`);
-  // An ordinary window is taller than its page by the tab strip and toolbar; headless is not.
+  // A visible window is taller than its page by the tab strip and toolbar.
   const framed = v.visible === 'visible' && v.outer[1] > v.inner[1];
   out(framed ? 'PASS' : 'FAIL', 'chrome.window-frame', `${v.visible} tab, window ${v.outer.join('x')}, page ${v.inner.join('x')}`);
-  // No WebGL at all, or SwiftShader, both tell a page this is not an ordinary desktop
-  // browser; the wrapper's --ignore-gpu-blocklist gets Mesa's llvmpipe instead.
-  if (!v.renderer) out('FAIL', 'chrome.webgl', 'no WebGL - a page can tell this is not an ordinary desktop browser');
-  else if (/SwiftShader/i.test(v.renderer)) out('FAIL', 'chrome.webgl', `SwiftShader, a headless-browser signature: ${v.renderer}`);
+  // Without the wrapper's --ignore-gpu-blocklist there is no WebGL and maps, 3D viewers and
+  // canvas-heavy pages fail. SwiftShader would mean Chrome fell back to its own renderer,
+  // which it does not consider safe for browsing; the wrapper gets Mesa's llvmpipe instead.
+  if (!v.renderer) out('FAIL', 'chrome.webgl', 'no WebGL - pages that need it will not work');
+  else if (/SwiftShader/i.test(v.renderer)) out('FAIL', 'chrome.webgl', `SwiftShader instead of Mesa llvmpipe: ${v.renderer}`);
   else out('PASS', 'chrome.webgl', v.renderer);
+  // Xtigervnc's pointer has no device type Chrome counts, so without the wrapper's
+  // --blink-settings pages see (pointer: none) and serve the layout for devices without a mouse.
+  const mouse = ['pointer: fine', 'hover: hover', 'any-pointer: fine', 'any-hover: hover'].every((q) => v.pointer.includes(q));
+  out(mouse ? 'PASS' : 'FAIL', 'chrome.pointer', `page sees ${v.pointer.join(', ')}`);
 } catch (e) {
   out('FAIL', 'chrome.page-loads', `could not inspect the page: ${e.message}`);
 }

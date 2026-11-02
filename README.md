@@ -43,7 +43,9 @@ Each VM has:
   desktop, so a browser or the emulator it opens appears where I can see it. Double-clicking the VM's `.rdp` file
   opens that desktop, without a password prompt.
 - Node, Java (Temurin 21 and 17), the Android SDK and an emulator that starts from a snapshot in seconds.
-- VS Code, Google Chrome with the Claude in Chrome extension, Chromium and Playwright with its browsers.
+- VS Code, Google Chrome with the Claude in Chrome extension, Chromium and Playwright with its browsers. Chrome is
+  set up like Chrome on any desktop, with WebGL, a mouse, the fonts for every script, and this machine's time zone and
+  language. So the agent can open, read and use websites the way I would at the keyboard.
 - Docker with compose, usable without `sudo`.
 - Claude Code and the GitHub CLI. The script can log both in for me, over SSH, after the VM has booted.
 

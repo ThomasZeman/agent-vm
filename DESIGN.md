@@ -271,10 +271,15 @@ and its Linux build is only published for some releases, so a failed download wa
   `--password-store=basic --no-first-run --no-default-browser-check`. Without it a fresh profile stops on two
   dialogs nobody is there to answer: the first-run terms of service, and - because the agent desktop starts through
   VNC/xrdp with no keyring to unlock - "Choose password for new keyring". No page loads until both are dismissed.
-  The wrapper also adds `--ignore-gpu-blocklist`: the VM has no GPU, and without the flag Chrome switches WebGL off,
-  which tells any page it is not an ordinary desktop browser. With it, WebGL runs on Mesa's llvmpipe and reports
-  `ANGLE (Mesa, llvmpipe ...)`, the renderer of real Linux desktops without a GPU driver - not SwiftShader, which is
-  the signature of headless Chrome.
+  Two more flags make up for what the VM's virtual hardware lacks, so Chrome works like it does on any desktop and
+  the agent uses websites the way a person at the keyboard would. `--ignore-gpu-blocklist`: the VM has no GPU, and
+  without the flag Chrome switches WebGL off, so maps, 3D viewers and canvas-heavy pages fail. With it, WebGL runs
+  on Mesa's llvmpipe, the same software renderer a Linux desktop without a GPU driver uses. `--blink-settings` for
+  a fine pointer with hover: Xtigervnc's pointer has no input-device type Chrome recognises, so without it pages
+  believe there is no mouse (`(pointer: none)`) and serve layouts and menus meant for devices without one, although
+  the VNC/RDP pointer is an ordinary mouse.
+- **Fonts** of a standard Ubuntu desktop, CJK, Indic, Arabic, Thai and the other scripts included. A bare XFCE
+  install brings only a handful, so pages in those scripts render as empty boxes.
 - **Time zone and locale** are the build host's, read by `Build-GoldenImage.ps1` and set by the unattended install,
   so every VM - and the browser in it - reads time and language the way the host does.
 - **Chromium** for general web work, from apt with the snap as fallback.
@@ -405,8 +410,8 @@ the project name and the adb settings, writes the agent's global `~/.claude/CLAU
 `CLAUDE.md` holds facts about the machine and nothing about the kind of project: where the project is, the desktop on
 `:1` and when a command needs `DISPLAY=:1`, what is installed, screenshots into `~/shots/` as proof that something
 works, long-running processes in tmux, and how to start the emulator when a task needs it. Every VM gets the same
-file, whether it is for a mobile app, a website or a scraper. The project's own conventions (build, test, its
-verification loop) belong in its repo's `CLAUDE.md`, which Claude Code loads on top of the global one.
+file, whether it is for a mobile app, a website or a backend service. The project's own conventions (build, test,
+its verification loop) belong in its repo's `CLAUDE.md`, which Claude Code loads on top of the global one.
 
 It is on the seed rather than in the image so that an edit reaches the next VM without a 30 to 50 minute image
 build, and the seed's copy also replaces the React Native version that older images carry. The trade-off is the

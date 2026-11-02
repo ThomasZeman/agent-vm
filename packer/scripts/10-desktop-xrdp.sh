@@ -45,6 +45,26 @@ apt_get install -y \
     net-tools \
     iproute2
 
+echo "==> Fonts of a standard Ubuntu desktop"
+# The xfce4 metapackage brings a handful of Latin fonts, so a page in Chinese, Hindi, Arabic
+# or Thai renders as rows of empty boxes - in the browser, in the terminal, in screenshots.
+# These are the fonts an Ubuntu desktop install ships: Noto (core and CJK) from the
+# ubuntu-desktop metapackage, and the per-script families the installer adds for
+# language support.
+apt_get install -y \
+    fonts-noto-core \
+    fonts-noto-cjk \
+    fonts-indic \
+    fonts-kacst \
+    fonts-khmeros-core \
+    fonts-lao \
+    fonts-lklug-sinhala \
+    fonts-sil-abyssinica \
+    fonts-sil-padauk \
+    fonts-thai-tlwg \
+    fonts-tibetan-machine \
+    fonts-opensymbol
+
 echo "==> xrdp: lossless settings"
 # Set a key in [Globals] whether it is present, commented out, or missing entirely.
 set_ini() {

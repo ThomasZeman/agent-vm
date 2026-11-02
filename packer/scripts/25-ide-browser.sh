@@ -72,7 +72,7 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://d
 apt_get update
 apt_get install -y google-chrome-stable
 
-echo "==> Chrome without startup dialogs (keyring, first run), with software WebGL"
+echo "==> Chrome without startup dialogs (keyring, first run), with WebGL and the mouse"
 # Two modal dialogs stand between a fresh profile and its first page, and an agent working
 # alone cannot answer either - it just sees pages that never finish loading.
 #
@@ -80,12 +80,22 @@ echo "==> Chrome without startup dialogs (keyring, first run), with software Web
 # then nags to become the default browser). --no-first-run and --no-default-browser-check
 # skip both; the extension policy below is unaffected.
 #
+# The next two make up for the VM's virtual hardware, so the agent gets the same web as a
+# person at a desktop - pages laid out and working as their authors intended.
+#
 # WebGL: the VM has no GPU, and Chrome will not fall back to a software renderer on its own,
-# so it switches WebGL off - and a browser with no WebGL at all is a well-known bot signal.
+# so it switches WebGL off and maps, 3D viewers and canvas-heavy pages fail to load.
 # --ignore-gpu-blocklist lets it use Mesa's llvmpipe (WebGL 1 and 2, via ANGLE on OpenGL),
-# which reports "ANGLE (Mesa, llvmpipe ...)": what real Linux desktops without a GPU driver
-# show, and it passes failIfMajorPerformanceCaveat. Not --enable-unsafe-swiftshader: its
-# "SwiftShader" renderer is the signature of headless Chrome on a server.
+# the renderer any Linux desktop without a GPU driver uses, and fast enough that pages do
+# not refuse it (it passes failIfMajorPerformanceCaveat). Not --enable-unsafe-swiftshader:
+# Chrome's own fallback, which its name says is not meant for browsing untrusted pages.
+#
+# Mouse: Chrome counts pointing devices from the X server's input devices, and the only
+# pointer Xtigervnc has ("TigerVNC pointer") carries no input-device type, so Chrome finds
+# no mouse: pages see (pointer: none) and (hover: none) and serve the layout for devices
+# without one - hover menus that never open, touch-sized controls. The VNC/RDP pointer is
+# a mouse that moves and hovers, so --blink-settings tells Blink so: fine pointer (4) and
+# hover (2), primary and available.
 #
 # Keyring: on XFCE Chrome keeps its cookie and password encryption key in the desktop keyring. The
 # agent desktop is started through VNC/xrdp, not a display-manager login, so no keyring
@@ -108,10 +118,13 @@ sudo tee /usr/bin/google-chrome-stable >/dev/null <<'WRAPPER'
 # Installed by agent-vm (packer/scripts/25-ide-browser.sh); the package's original is
 # diverted to /usr/bin/google-chrome-stable.distrib. Starts Chrome without the keyring
 # and first-run dialogs, which nobody is at the desktop to answer, and with WebGL on the
-# software renderer, since the VM has no GPU.
+# software renderer, since the VM has no GPU. The VNC pointer is a mouse, but carries no
+# device type Chrome recognises, so --blink-settings tells it there is one.
 exec /usr/bin/google-chrome-stable.distrib \
     --password-store=basic --no-first-run --no-default-browser-check \
-    --ignore-gpu-blocklist "$@"
+    --ignore-gpu-blocklist \
+    --blink-settings=primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2 \
+    "$@"
 WRAPPER
 sudo chmod 755 /usr/bin/google-chrome-stable
 # Fail the build rather than ship an image that hangs on a startup dialog again: every
