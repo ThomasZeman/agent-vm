@@ -159,7 +159,7 @@ Once the installed system answers on SSH, Packer runs the scripts in `packer/scr
 | `25-ide-browser.sh` | VS Code, the GitHub CLI, Google Chrome with the Claude extension, Chromium, Playwright |
 | `30-android-sdk.sh` | The Android SDK, a system image, the `dev` AVD, `~/bin/emu`, `adb-bridge.service` |
 | `40-emulator-snapshot.sh` | Boots the AVD once and saves the `golden` snapshot |
-| `50-claude.sh` | Claude Code, its VS Code extension, the `mobile` MCP server, the global `CLAUDE.md` |
+| `50-claude.sh` | Claude Code, its VS Code extension, the `mobile` MCP server, `~/shots/` |
 | `90-cleanup.sh` | Generalizes the disk so it can be cloned (section 3, "Generalization") |
 
 All of them pass apt settings as arguments to `sudo` (`DEBIAN_FRONTEND=noninteractive`), because `sudo` resets the
@@ -296,9 +296,10 @@ for a cold boot. Section 8 covers how it is started.
   because extensions are per user.
 - The **`mobile` MCP server**, registered for the user. Driving the app through `tap_element` and
   `list_elements_on_screen` is far more reliable than `adb shell input tap` at coordinates the agent guessed.
-- **`~/.claude/CLAUDE.md`** with the conventions of the machine: where the project is (`~/app`), how to start the
-  emulator, the screenshot verification loop, and that long-running processes belong in tmux.
 - **`~/shots/`** for screenshots.
+
+The agent's global `~/.claude/CLAUDE.md` is deliberately not part of the image. `New-AgentVM.ps1` writes it through
+the cloud-init seed (section 5), because it changes more often than I rebuild the image.
 
 ### Environment, services and home directory
 
@@ -318,7 +319,7 @@ does not, which is why `~/bin/emu` loads the Android profile itself and Java is 
 ~/Android/Sdk/                  the Android SDK
 ~/.android/avd/dev.avd/         the AVD, with snapshots/golden
 ~/bin/emu                       starts the emulator
-~/.claude/CLAUDE.md             the agent's conventions for this machine
+~/.claude/CLAUDE.md             the agent's conventions for this machine (from the seed, not the image)
 ~/.vnc/config, ~/.vnc/passwd    the agent desktop's settings, and its password (per VM, not in the image)
 ~/.config/autostart/            agent terminal, no screen blanking, hidden screensavers, optionally the emulator
 ~/shots/                        screenshots
@@ -368,8 +369,19 @@ Since VMs do not start with the host, an agent does not resume after the host re
 
 The seed is a small ISO with `user-data` and `meta-data`, labelled `CIDATA`, which cloud-init's NoCloud datasource
 finds by its label. It sets the hostname, the `dev` user with my SSH key and passwordless sudo, writes `~/.env` with
-the project name and the adb settings, and creates `~/app`. With `-StartEmulator` it also writes the emulator's
-autostart entry.
+the project name and the adb settings, writes the agent's global `~/.claude/CLAUDE.md`, and creates `~/app`. With
+`-StartEmulator` it also writes the emulator's autostart entry.
+
+`CLAUDE.md` holds facts about the machine and nothing about the kind of project: where the project is, the desktop on
+`:1` and when a command needs `DISPLAY=:1`, what is installed, screenshots into `~/shots/` as proof that something
+works, long-running processes in tmux, and how to start the emulator when a task needs it. Every VM gets the same
+file, whether it is for a mobile app, a website or a scraper. The project's own conventions (build, test, its
+verification loop) belong in its repo's `CLAUDE.md`, which Claude Code loads on top of the global one.
+
+It is on the seed rather than in the image so that an edit reaches the next VM without a 30 to 50 minute image
+build, and the seed's copy also replaces the React Native version that older images carry. The trade-off is the
+first-boot rule below: an existing VM keeps the file it was created with, and gets a newer one only by copying it
+over SSH.
 
 The seed contains nothing secret, and that is the central rule of the design: **the ISO stays attached to the VM for
 its whole life, and anything running inside the VM can read it.** No password, token or key goes on it. The

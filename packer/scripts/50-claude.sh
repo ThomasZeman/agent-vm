@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code, the Android MCP server, and the shared conventions file (DESIGN.md, section 4).
+# Claude Code, its VS Code extension and the Android MCP server (DESIGN.md, section 4).
 #
 # No credentials here (DESIGN.md, section 7). Each VM is logged in after boot against your
 # Claude subscription - by New-AgentVM.ps1 over SSH, or with /login in the guest - and the token
@@ -39,44 +39,10 @@ if ! claude mcp add --scope user mobile -- npx -y @mobilenext/mobile-mcp@latest;
     mv "$tmp" "$config"
 fi
 
-echo "==> global CLAUDE.md"
+echo "==> ~/shots"
+# Screenshots go here so they can be reviewed from the host. The global ~/.claude/CLAUDE.md is
+# not written here but by New-AgentVM.ps1, through the cloud-init seed: it changes more often
+# than the image is rebuilt, and an edit should reach the next VM without a 30-50 min build.
 mkdir -p "$HOME/shots"
-cat > "$HOME/.claude/CLAUDE.md" <<CLAUDEMD
-# Conventions for this machine
-
-This is a disposable Ubuntu VM dedicated to one React Native project. The repo is in
-\`~/app\`, project-specific environment variables are in \`~/.env\`.
-
-## Emulator
-
-- It is not running unless this VM was created with -StartEmulator; \`adb devices\` tells.
-  Start it when the task needs it, warm, in its own tmux window so it outlives your
-  command: \`tmux new-window -d -n emu '~/bin/emu -snapshot golden'\` (a few seconds). It
-  opens as a window on the desktop the human is watching.
-- Cold boot only if the snapshot is broken: \`~/bin/emu -no-snapshot-load\` (60-90 s).
-- Check it is up: \`adb devices\` should list \`emulator-5554\` as \`device\`.
-- If \`~/.env\` sets \`ADB_SERVER_SOCKET\`, this VM is driving a **physical phone on the
-  Windows host** instead. Do not start the emulator; \`adb devices\` already shows the phone.
-
-## The verification loop
-
-Never claim a UI change works because the code looks right. Run the loop:
-
-1. Change the code.
-2. Reload Metro: \`adb shell input text RR\` or \`curl -s http://localhost:8081/reload\`.
-3. Screenshot: \`adb exec-out screencap -p > ~/shots/\$(date +%H%M%S).png\`.
-4. Inspect the screenshot, or use the \`mobile\` MCP tools to read the element tree.
-5. Compare against what was asked - colours as hex, spacing in dp
-   (px / density; get density with \`adb shell wm density\`).
-
-Screenshots go in \`~/shots/\` so they can be reviewed from the host.
-
-## Preferences
-
-- Prefer the \`mobile\` MCP tools over raw \`adb shell input\` coordinates.
-- Metro runs on 8081. If a port is busy, something is already running - check before killing.
-- Long-running things (Metro, the emulator, the agent) belong in \`tmux\`, not in a
-  foreground shell that dies with the SSH connection.
-CLAUDEMD
 
 echo "==> 50-claude.sh done"

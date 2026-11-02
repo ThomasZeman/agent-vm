@@ -645,6 +645,7 @@ write_files:
       # Physical device mode (DESIGN.md, section 8). An empty ANDROID_SERIAL means the emulator.
       ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET}
       ANDROID_SERIAL=${DEVICE_SERIAL}
+${CLAUDE_MD}
 ${EMULATOR_AUTOSTART}
 runcmd:
   # Every entry is a YAML *sequence* (an argv list), not a bare string, and each shell
@@ -700,6 +701,82 @@ $emulatorAutostart = @'
       Comment=Written by New-AgentVM.ps1 -StartEmulator
       Exec=bash -lc "unset ADB_SERVER_SOCKET; exec ~/bin/emu -snapshot golden >/tmp/emu.log 2>&1"
 '@
+
+# The agent's global ~/.claude/CLAUDE.md. Facts about the machine only, nothing about the kind
+# of project: every VM gets the same file, whether it is for a mobile app, a website or a
+# scraper. Project conventions (build, test, its verification loop) belong in the project's own
+# ~/app/CLAUDE.md, which Claude Code loads on top of this one.
+#
+# It lives here, not in the golden image (50-claude.sh), so an edit reaches the next VM without
+# rebuilding the image; written by cloud-init it also replaces the file that older images
+# carry. It is not secret, so the seed ISO is a fine place for it. Only the first boot writes
+# it: existing VMs keep the file they were created with.
+#
+# Plain markdown, indented into the YAML block scalar below. No `${...}` in here: the
+# substitutions further down would replace it.
+$claudeMd = @'
+# This machine
+
+A disposable Ubuntu 24.04 VM dedicated to one project. The worst case is that it gets deleted
+and recreated, so you can install, configure and break things freely inside it.
+
+- The project is in `~/app`. Its own `CLAUDE.md`, if it has one, has the project's conventions
+  and takes precedence over this file. Per-VM environment variables are in `~/.env`.
+- `~/.claude/CLAUDE.md` (this file) was written when the VM was created and is the same in
+  every VM. Project conventions go into the project's `CLAUDE.md`, not here.
+
+## The desktop
+
+- An XFCE desktop runs permanently on X display `:1`, whether or not anyone is connected.
+  The human watches it over Remote Desktop.
+- The `agent` tmux session runs on that desktop and has `DISPLAY=:1`. Anything with a window
+  (a headed browser, the Android emulator, VS Code) opens where the human can see it.
+- A plain SSH command has no `DISPLAY`. Headless tools do not need one; for a window, set
+  `DISPLAY=:1` explicitly.
+
+## What is installed
+
+- Node 22 LTS with npm. Java 21 (default) and 17 via SDKMAN, a C/C++ toolchain, git, jq.
+- Google Chrome and Chromium. Playwright is installed globally with all its browsers cached
+  in `~/.cache/ms-playwright`; a project-local `playwright` of the same version reuses them,
+  another version downloads its own.
+- VS Code, the GitHub CLI (`gh auth status` tells whether it is logged in), tmux.
+- The Android SDK in `~/Android/Sdk` with adb and an emulator; see below. The `mobile` MCP
+  server drives Android apps through the element tree - prefer it over `adb shell input`
+  at guessed coordinates.
+
+## Verifying your work
+
+Never claim that something visible works because the code looks right. Look at it: take a
+screenshot (Playwright `page.screenshot` for the web, `adb exec-out screencap -p` for
+Android), save it in `~/shots/` so the human can review it, and inspect it.
+
+## Habits
+
+- Long-running processes (dev servers, the emulator, watchers) belong in their own tmux
+  window, not in a foreground shell that dies with the SSH connection or the command.
+- If a port is busy, something is already running - find out what before killing it.
+
+## Android emulator (only when the task needs it)
+
+- It is not running unless this VM was created with -StartEmulator; `adb devices` tells.
+  Start it warm, in its own tmux window, so it outlives your command:
+  `tmux new-window -d -n emu '~/bin/emu -snapshot golden'` (a few seconds, 2-4GB RAM).
+- Cold boot only if the snapshot is broken: `~/bin/emu -no-snapshot-load` (60-90 s).
+- It is up when `adb devices` lists `emulator-5554` as `device`. Stop it with `adb emu kill`.
+- If `~/.env` sets `ADB_SERVER_SOCKET`, this VM drives a **physical phone on the Windows
+  host** instead. Do not start the emulator; `adb devices` already shows the phone.
+'@
+
+# `defer` writes it after the users stage, so the owner exists and ~/.claude keeps its owner.
+# Every line, blank ones included, gets the block scalar's six spaces of indentation.
+$claudeMdEntry = @'
+  - path: /home/dev/.claude/CLAUDE.md
+    owner: dev:dev
+    permissions: '0644'
+    defer: true
+    content: |
+'@ + "`n" + ((($claudeMd -replace "`r`n", "`n").TrimEnd("`n") -split "`n" | ForEach-Object { "      $_" }) -join "`n")
 
 $metaDataTemplate = @'
 instance-id: ${NAME}-${INSTANCE}
@@ -856,6 +933,7 @@ esac
 # the local default (DESIGN.md, section 8).
 $adbServerSocket = if ($DeviceSerial) { "tcp:${HostIp}:5037" } else { '' }
 $substitutions = [ordered]@{
+    '${CLAUDE_MD}'          = $claudeMdEntry
     '${EMULATOR_AUTOSTART}' = $(if ($StartEmulator) { $emulatorAutostart } else { '' })
     '${NAME}'              = $Name
     '${SSH_PUBKEY}'        = $sshPublicKey
