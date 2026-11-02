@@ -72,13 +72,20 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://d
 apt_get update
 apt_get install -y google-chrome-stable
 
-echo "==> Chrome without startup dialogs (keyring, first run)"
+echo "==> Chrome without startup dialogs (keyring, first run), with software WebGL"
 # Two modal dialogs stand between a fresh profile and its first page, and an agent working
 # alone cannot answer either - it just sees pages that never finish loading.
 #
 # First run: a fresh profile opens on Google's "Additional Terms of Service" dialog (and
 # then nags to become the default browser). --no-first-run and --no-default-browser-check
 # skip both; the extension policy below is unaffected.
+#
+# WebGL: the VM has no GPU, and Chrome will not fall back to a software renderer on its own,
+# so it switches WebGL off - and a browser with no WebGL at all is a well-known bot signal.
+# --ignore-gpu-blocklist lets it use Mesa's llvmpipe (WebGL 1 and 2, via ANGLE on OpenGL),
+# which reports "ANGLE (Mesa, llvmpipe ...)": what real Linux desktops without a GPU driver
+# show, and it passes failIfMajorPerformanceCaveat. Not --enable-unsafe-swiftshader: its
+# "SwiftShader" renderer is the signature of headless Chrome on a server.
 #
 # Keyring: on XFCE Chrome keeps its cookie and password encryption key in the desktop keyring. The
 # agent desktop is started through VNC/xrdp, not a display-manager login, so no keyring
@@ -100,9 +107,11 @@ sudo tee /usr/bin/google-chrome-stable >/dev/null <<'WRAPPER'
 #!/bin/sh
 # Installed by agent-vm (packer/scripts/25-ide-browser.sh); the package's original is
 # diverted to /usr/bin/google-chrome-stable.distrib. Starts Chrome without the keyring
-# and first-run dialogs, which nobody is at the desktop to answer.
+# and first-run dialogs, which nobody is at the desktop to answer, and with WebGL on the
+# software renderer, since the VM has no GPU.
 exec /usr/bin/google-chrome-stable.distrib \
-    --password-store=basic --no-first-run --no-default-browser-check "$@"
+    --password-store=basic --no-first-run --no-default-browser-check \
+    --ignore-gpu-blocklist "$@"
 WRAPPER
 sudo chmod 755 /usr/bin/google-chrome-stable
 # Fail the build rather than ship an image that hangs on a startup dialog again: every

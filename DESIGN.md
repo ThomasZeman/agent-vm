@@ -271,6 +271,10 @@ and its Linux build is only published for some releases, so a failed download wa
   `--password-store=basic --no-first-run --no-default-browser-check`. Without it a fresh profile stops on two
   dialogs nobody is there to answer: the first-run terms of service, and - because the agent desktop starts through
   VNC/xrdp with no keyring to unlock - "Choose password for new keyring". No page loads until both are dismissed.
+  The wrapper also adds `--ignore-gpu-blocklist`: the VM has no GPU, and without the flag Chrome switches WebGL off,
+  which tells any page it is not an ordinary desktop browser. With it, WebGL runs on Mesa's llvmpipe and reports
+  `ANGLE (Mesa, llvmpipe ...)`, the renderer of real Linux desktops without a GPU driver - not SwiftShader, which is
+  the signature of headless Chrome.
 - **Time zone and locale** are the build host's, read by `Build-GoldenImage.ps1` and set by the unattended install,
   so every VM - and the browser in it - reads time and language the way the host does.
 - **Chromium** for general web work, from apt with the snap as fallback.
