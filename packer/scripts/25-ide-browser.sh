@@ -72,6 +72,50 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://d
 apt_get update
 apt_get install -y google-chrome-stable
 
+echo "==> Chrome without startup dialogs (keyring, first run)"
+# Two modal dialogs stand between a fresh profile and its first page, and an agent working
+# alone cannot answer either - it just sees pages that never finish loading.
+#
+# First run: a fresh profile opens on Google's "Additional Terms of Service" dialog (and
+# then nags to become the default browser). --no-first-run and --no-default-browser-check
+# skip both; the extension policy below is unaffected.
+#
+# Keyring: on XFCE Chrome keeps its cookie and password encryption key in the desktop keyring. The
+# agent desktop is started through VNC/xrdp, not a display-manager login, so no keyring
+# exists and nothing unlocks one: the first Chrome start puts a "Choose password for new
+# keyring" dialog in front of every tab, and nothing loads until someone answers it.
+# --password-store=basic makes Chrome keep that key itself. The data is then protected by
+# the guest's file permissions rather than a keyring password - nothing lost in a
+# single-user VM whose keyring would otherwise have needed an empty password to be usable.
+#
+# One choke point covers every launcher: the menu entries and the default-browser entry
+# Exec /usr/bin/google-chrome-stable, and /usr/bin/google-chrome resolves to it through
+# alternatives. dpkg-divert moves the package's symlink aside and keeps it aside across
+# Chrome updates, so the wrapper put in its place survives apt upgrades. Our flags go
+# first so an explicit flag from the caller still wins.
+sudo dpkg-divert --local --rename \
+    --divert /usr/bin/google-chrome-stable.distrib \
+    --add /usr/bin/google-chrome-stable
+sudo tee /usr/bin/google-chrome-stable >/dev/null <<'WRAPPER'
+#!/bin/sh
+# Installed by agent-vm (packer/scripts/25-ide-browser.sh); the package's original is
+# diverted to /usr/bin/google-chrome-stable.distrib. Starts Chrome without the keyring
+# and first-run dialogs, which nobody is at the desktop to answer.
+exec /usr/bin/google-chrome-stable.distrib \
+    --password-store=basic --no-first-run --no-default-browser-check "$@"
+WRAPPER
+sudo chmod 755 /usr/bin/google-chrome-stable
+# Fail the build rather than ship an image that hangs on a startup dialog again: every
+# Chrome launcher in the menu must go through the wrapper.
+for desktop in /usr/share/applications/*.desktop; do
+    if grep -q '^Exec=.*/opt/google/chrome' "$desktop"; then
+        echo "ERROR: $desktop starts Chrome without the wrapper" >&2
+        exit 1
+    fi
+done
+readlink -f /usr/bin/google-chrome | grep -qx /usr/bin/google-chrome-stable \
+    || { echo "ERROR: google-chrome does not resolve to the wrapper" >&2; exit 1; }
+
 echo "==> Claude in Chrome extension (force-installed by policy)"
 # There is no unattended "install this extension" command; the supported mechanism is
 # enterprise policy, which Chrome reads from /etc/opt/chrome/policies/managed at startup

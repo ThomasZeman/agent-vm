@@ -267,7 +267,10 @@ and its Linux build is only published for some releases, so a failed download wa
 - **GitHub CLI** from GitHub's apt repository, logged into nothing.
 - **Google Chrome** from Google's apt repository, with the **Claude in Chrome** extension force-installed through a
   managed policy (`/etc/opt/chrome/policies/managed/claude-in-chrome.json`). Chrome downloads the extension on its
-  first start.
+  first start. `/usr/bin/google-chrome-stable` is diverted (`dpkg-divert`) to a wrapper that adds
+  `--password-store=basic --no-first-run --no-default-browser-check`. Without it a fresh profile stops on two
+  dialogs nobody is there to answer: the first-run terms of service, and - because the agent desktop starts through
+  VNC/xrdp with no keyring to unlock - "Choose password for new keyring". No page loads until both are dismissed.
 - **Chromium** for general web work, from apt with the snap as fallback.
 - **Playwright**, installed globally, with the Chromium, Firefox and WebKit builds in `~/.cache/ms-playwright`.
 
