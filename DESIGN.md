@@ -271,6 +271,8 @@ and its Linux build is only published for some releases, so a failed download wa
   `--password-store=basic --no-first-run --no-default-browser-check`. Without it a fresh profile stops on two
   dialogs nobody is there to answer: the first-run terms of service, and - because the agent desktop starts through
   VNC/xrdp with no keyring to unlock - "Choose password for new keyring". No page loads until both are dismissed.
+- **Time zone and locale** are the build host's, read by `Build-GoldenImage.ps1` and set by the unattended install,
+  so every VM - and the browser in it - reads time and language the way the host does.
 - **Chromium** for general web work, from apt with the snap as fallback.
 - **Playwright**, installed globally, with the Chromium, Firefox and WebKit builds in `~/.cache/ms-playwright`.
 

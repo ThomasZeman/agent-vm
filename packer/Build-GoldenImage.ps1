@@ -50,6 +50,18 @@
     "autoinstall" drops you into the interactive installer - see the note below Write-Step
     'packer build'. Raise it if that keeps happening.
 
+.PARAMETER TimeZone
+    IANA time zone baked into the image, e.g. Australia/Sydney. Defaults to this host's Windows
+    time zone, translated by the ICU library that ships with Windows. Every VM cloned from
+    the image - and the browser in it - then reads time the way the host does; the clock
+    itself follows the host through Hyper-V time synchronization.
+
+.PARAMETER Locale
+    System locale baked into the image, e.g. en_AU.UTF-8. Defaults to this host's culture
+    (Get-Culture). It becomes LANG for every session, the agent desktop included, so Chrome's
+    UI language and Accept-Language follow it. Falls back to en_US.UTF-8 for a culture with
+    no country part.
+
 .NOTES
     The install is UNATTENDED. Nothing in this script or the Packer template types answers
     into Ubuntu's installer, and nothing needs to: http/user-data.pkrtpl.hcl answers every
@@ -113,7 +125,15 @@ param(
     # only works while that ISO is still the current one.
     [string]$IsoUrl,
 
-    [string]$IsoChecksum
+    [string]$IsoChecksum,
+
+    # IANA zone for the image. Defaults to this host's (see Get-HostIanaTimeZone).
+    [ValidatePattern('^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$')]
+    [string]$TimeZone,
+
+    # System locale for the image. Defaults to this host's culture, e.g. en-AU -> en_AU.UTF-8.
+    [ValidatePattern('^[a-z]{2,3}_[A-Z]{2}\.UTF-8$')]
+    [string]$Locale
 )
 
 $ErrorActionPreference = 'Stop'
@@ -121,6 +141,9 @@ Set-StrictMode -Version Latest
 
 function Write-Step { param([string]$Text) Write-Host "==> $Text" -ForegroundColor Cyan }
 function Write-Note { param([string]$Text) Write-Host "    $Text" -ForegroundColor DarkGray }
+
+# Get-HostIanaTimeZone, Get-HostLocale - shared with Test-AgentVM.ps1.
+. ([IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'HostLocale.ps1'))
 
 function Resolve-UbuntuIso {
     <#
@@ -372,6 +395,14 @@ if (-not $SkipBuild) {
         Write-Note "$($iso.File) - $($iso.Checksum)"
     }
 
+    # Read once from the host and baked in, so every clone reads time and language the way
+    # the host does - see .PARAMETER TimeZone / Locale.
+    if (-not $TimeZone) { $TimeZone = Get-HostIanaTimeZone }
+    if (-not $Locale)   { $Locale = Get-HostLocale }
+    $hostArgs = @('-var', "timezone=$TimeZone", '-var', "locale=$Locale")
+    Write-Step 'Time zone and locale (from this host)'
+    Write-Note "$TimeZone, $Locale"
+
     Write-Step 'packer init'
     & packer init $PackerDirectory
     if ($LASTEXITCODE -ne 0) { throw "packer init failed with exit code $LASTEXITCODE" }
@@ -382,6 +413,7 @@ if (-not $SkipBuild) {
     Write-Step 'packer validate'
     & packer validate `
         @isoArgs `
+        @hostArgs `
         -var "output_directory=$($BuildDirectory -replace '\\', '/')" `
         -var "switch_name=$SwitchName" `
         -var "vm_name=$VmName" `
@@ -411,6 +443,7 @@ if (-not $SkipBuild) {
     $started = Get-Date
     & packer build `
         @isoArgs `
+        @hostArgs `
         -var "output_directory=$($BuildDirectory -replace '\\', '/')" `
         -var "switch_name=$SwitchName" `
         -var "vm_name=$VmName" `

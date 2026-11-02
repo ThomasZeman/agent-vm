@@ -88,6 +88,28 @@ variable "dev_password_hash" {
   default     = "$6$devvmsalt$GiZ0v.02kBs634mGUoPSfSZvj6o1VqntatWSQsOG7oAoywqLTvd5zMLBfAp.vQcwb5osyEazd.9ZzY1vtYI8X1"
 }
 
+variable "timezone" {
+  type        = string
+  description = "IANA time zone for the image, e.g. Australia/Sydney. Build-GoldenImage.ps1 passes the host's."
+  default     = "Etc/UTC"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$", var.timezone))
+    error_message = "The time zone must be an IANA name such as Australia/Sydney."
+  }
+}
+
+variable "locale" {
+  type        = string
+  description = "System locale for the image, e.g. en_AU.UTF-8. It becomes LANG for every session, including the agent desktop, so Chrome's UI and Accept-Language follow it. Build-GoldenImage.ps1 passes the host's."
+  default     = "en_US.UTF-8"
+
+  validation {
+    condition     = can(regex("^[a-z]{2,3}_[A-Z]{2}\\.UTF-8$", var.locale))
+    error_message = "The locale must look like en_AU.UTF-8."
+  }
+}
+
 variable "cpus" {
   type    = number
   default = 4
@@ -181,6 +203,8 @@ locals {
     ssh_public_key    = trimspace(file(pathexpand(var.ssh_public_key_path)))
     dev_password_hash = var.dev_password_hash
     hostname          = var.vm_name
+    timezone          = var.timezone
+    locale            = var.locale
   })
 
   # A guard, not plumbing. If the rendered document is not valid YAML, cloud-init loads

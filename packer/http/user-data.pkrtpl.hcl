@@ -7,7 +7,11 @@
 autoinstall:
   version: 1
 
-  locale: en_US.UTF-8
+  # The build host's, passed in by Build-GoldenImage.ps1, so the guest reads time and
+  # language the way the host does - and so does the browser in it, whose reported time
+  # zone and Accept-Language would otherwise say UTC / en-US from an Australian IP.
+  locale: ${locale}
+  timezone: ${timezone}
   keyboard:
     layout: us
 
@@ -78,5 +82,10 @@ autoinstall:
   late-commands:
     - "echo 'dev ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-dev"
     - "chmod 440 /target/etc/sudoers.d/90-dev"
+    # A minimal server install only generates en_US. Generate the chosen locale explicitly
+    # and make it the default, rather than rely on the installer to - a LANG naming a
+    # locale that was never generated silently falls back to C.
+    - "curtin in-target --target=/target -- locale-gen ${locale}"
+    - "curtin in-target --target=/target -- update-locale LANG=${locale}"
 
   shutdown: reboot
